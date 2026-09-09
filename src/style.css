@@ -2581,25 +2581,25 @@ dialog .question-section {
 }
 @media (max-width: 760px) {
   .scale-preview {
-    gap: 7px;
+    gap: 3px;
   }
   .scale-preview > svg {
-    width: 8px;
+    width: 5px;
   }
   .scale-author {
-    font-size: 20px;
-  }
-  .scale-book {
-    font-size: 18px;
-  }
-  .scale-chapter {
     font-size: 16px;
   }
+  .scale-book {
+    font-size: 14px;
+  }
+  .scale-chapter {
+    font-size: 12px;
+  }
   .scale-fragment {
-    font-size: 13px;
+    font-size: 11px;
   }
   .scale-paragraph {
-    font-size: 11px;
+    font-size: 10px;
   }
   .author-intro {
     font-size: 14px;
