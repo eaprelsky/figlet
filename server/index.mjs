@@ -23,10 +23,15 @@ export function createApp({
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
-          scriptSrc: ["'self'"],
+          scriptSrc: [
+            "'self'",
+            'https://mc.yandex.ru',
+            'https://mc.yandex.com',
+            'https://yastatic.net',
+          ],
           styleSrc: ["'self'", "'unsafe-inline'"],
-          imgSrc: ["'self'", 'data:'],
-          connectSrc: ["'self'"],
+          imgSrc: ["'self'", 'data:', 'https://mc.yandex.ru', 'https://mc.yandex.com'],
+          connectSrc: ["'self'", 'https://mc.yandex.ru', 'https://mc.yandex.com'],
           fontSrc: ["'self'"],
           objectSrc: ["'none'"],
           frameAncestors: ["'none'"],
