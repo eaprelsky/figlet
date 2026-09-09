@@ -15,5 +15,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - name: Use Ubuntu repositories for Playwright system dependencies
+        run: |
+          # Playwright downloads its own Chromium. An unrelated Chrome apt mirror
+          # must not block installing Ubuntu libraries when that mirror is out of sync.
+          sudo python3 - <<'PY'
+          from pathlib import Path
+          for source in Path('/etc/apt/sources.list.d').iterdir():
+              if source.suffix in ('.list', '.sources') and 'dl.google.com/linux/chrome' in source.read_text():
+                  source.rename(source.with_suffix(source.suffix + '.disabled'))
+          PY
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
