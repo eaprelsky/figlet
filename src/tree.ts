@@ -32,9 +32,55 @@ export type Book = {
   currentNode: string;
   currentLevel?: number;
   currentAnchor?: number;
+  nodeAliases?: Record<string, string>;
   analyses: Record<string, Analysis>;
   answers: Record<string, { question: string; answer: string; quote?: string }[]>;
 };
+export function resolveNodeId(book: Book, id: string): string {
+  const visited = new Set<string>();
+  while (!book.nodes[id] && typeof book.nodeAliases?.[id] === 'string' && !visited.has(id)) {
+    visited.add(id);
+    id = book.nodeAliases[id];
+  }
+  return id;
+}
+
+// Imported chapter pages can repeat their title beneath the table-of-contents title.
+// A semantic step must narrow the source range, not visit another wrapper for it.
+export function normalizeBook(book: Book): Book {
+  const nodes = { ...book.nodes };
+  const aliases = { ...book.nodeAliases };
+  const analyses = { ...book.analyses };
+  const answers = { ...book.answers };
+  let changed = false;
+  const pending = ['root'];
+  while (pending.length) {
+    const id = pending.pop()!;
+    let node = nodes[id];
+    while (node.children.length === 1) {
+      const child = nodes[node.children[0]];
+      if (child.start !== node.start || child.end !== node.end) break;
+      changed = true;
+      node = nodes[id] = { ...node, children: [...child.children] };
+      for (const grandchild of child.children)
+        nodes[grandchild] = { ...nodes[grandchild], parent: id };
+      aliases[child.id] = id;
+      // Both nodes summarize the same original; keep a valid cached summary.
+      if (analyses[child.id]) analyses[id] = analyses[child.id];
+      else if (analyses[id]) analyses[id] = { ...analyses[id], children: [] };
+      if (answers[child.id]) answers[id] = [...(answers[id] || []), ...answers[child.id]];
+      delete nodes[child.id];
+      delete analyses[child.id];
+      delete answers[child.id];
+    }
+    pending.push(...node.children);
+  }
+  if (!changed) return book;
+  const result = { ...book, nodes, analyses, answers, nodeAliases: aliases };
+  result.currentNode = resolveNodeId(result, book.currentNode);
+  result.currentLevel = Math.max(0, ancestors(result, result.currentNode).length - 1);
+  return result;
+}
 export function expandNode(book: Book, nodeId: string): Book {
   const node = book.nodes[nodeId];
   if (!node || node.children.length || node.end - node.start <= 1) return book;

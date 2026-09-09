@@ -29,6 +29,8 @@ import {
   ancestors,
   expandNode,
   frontierAt,
+  normalizeBook,
+  resolveNodeId,
   readingMinutes,
   type Book,
   type Analysis,
@@ -217,7 +219,7 @@ export default function App() {
       setNotice('Эта книга уже есть в библиотеке. Открыта сохранённая версия.');
       return;
     }
-    const expanded = expandNode(book, 'root');
+    const expanded = expandNode(normalizeBook(book), 'root');
     await storage.save(expanded);
     booksRef.current = [expanded, ...booksRef.current];
     setBooks(booksRef.current);
@@ -240,8 +242,8 @@ export default function App() {
     if (bookId)
       updateBook(bookId, (b) => {
         level = requestedLevel ?? Math.max(0, ancestors(b, nodeId).length - 1);
-        anchor = requestedAnchor ?? b.nodes[nodeId].start;
         const expanded = frontierAt(b, level).book;
+        anchor = requestedAnchor ?? expanded.nodes[nodeId].start;
         return {
           ...expandNode(expanded, nodeId),
           currentNode: nodeId,
@@ -366,7 +368,10 @@ export default function App() {
     storage
       .books()
       .then((items) => {
-        const safe = items.filter(validBook).map((b) => expandNode(b, b.currentNode || 'root'));
+        const safe = items.filter(validBook).map((b) => {
+          const normalized = normalizeBook(b);
+          return expandNode(normalized, normalized.currentNode || 'root');
+        });
         booksRef.current = safe;
         setBooks(safe);
         setLoaded(true);
@@ -393,6 +398,17 @@ export default function App() {
     addEventListener('hashchange', change);
     return () => removeEventListener('hashchange', change);
   }, []);
+  useEffect(() => {
+    if (!active || !route?.nodeId) return;
+    const id = resolveNodeId(active, route.nodeId);
+    if (!active.nodes[id]) return;
+    if (id !== route.nodeId || !frontierAt(active, route.level).pages.includes(id)) {
+      const level = Math.max(0, ancestors(active, id).length - 1);
+      const hash = `/book/${encodeURIComponent(active.id)}/${encodeURIComponent(id)}?level=${level}&at=${route.anchor}`;
+      history.replaceState(null, '', `#${hash}`);
+      setRoute(readRoute());
+    }
+  }, [active, route]);
   useEffect(() => {
     const mq = matchMedia('(prefers-color-scheme: dark)');
     const apply = () =>
@@ -1587,8 +1603,9 @@ export default function App() {
               throw new Error('Это не архив библиотеки Figlet или он повреждён.');
             for (const b of data.books as Book[]) {
               if (!booksRef.current.some((x) => x.id === b.id)) {
-                await storage.save(b);
-                booksRef.current = [...booksRef.current, b];
+                const normalized = normalizeBook(b);
+                await storage.save(normalized);
+                booksRef.current = [...booksRef.current, normalized];
               }
             }
             if (Array.isArray(data.authors)) {

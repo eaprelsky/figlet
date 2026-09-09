@@ -155,3 +155,72 @@ test('mobile controls, dark theme, and author/map screens fit a narrow viewport'
   await page.getByRole('button', { name: 'Закрыть библиотеку' }).click();
   await expect(page.locator('.sidebar.is-open')).toHaveCount(0);
 });
+
+test('lazy fragments can be opened, paged across chapters, and restored', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await setup(page);
+  await page.locator('.author-work').first().click();
+  await expect(page.locator('.saved-mark')).toBeVisible();
+  await page.locator('.depth-row').first().click();
+  await expect(page.locator('.reading-title')).toHaveText('Глава 1');
+  await expect(page.locator('.saved-mark')).toBeVisible();
+  await page.locator('.depth-row').first().click();
+  await expect(page.locator('.reading-title')).toHaveText('Абзац 1.');
+  for (const n of [4, 7, 10, 13]) {
+    await page.getByRole('button', { name: 'Следующая страница этого уровня' }).click();
+    await expect(page.locator('.reading-title')).toHaveText(`Абзац ${n}.`);
+  }
+  await page.getByRole('button', { name: 'Увеличить глубину — больше деталей' }).click();
+  await page.getByRole('button', { name: 'Следующая страница этого уровня' }).click();
+  await expect(page.locator('.reading-title')).toHaveText('Абзац 14.');
+  await page.reload();
+  await expect(page.locator('.reading-title')).toHaveText('Абзац 14.');
+  await page.getByRole('tab', { name: 'Оригинал' }).click();
+  await expect(page.locator('.original-paragraph p')).toHaveText(paragraphs[13]);
+  expect(errors).toEqual([]);
+});
+
+test('duplicate chapter wrappers are skipped and old saved links still open', async ({ page }) => {
+  await setup(page);
+  const wrapped = makeBook({
+    title: 'Повтор заголовка',
+    author: fixture.author,
+    blocks: [
+      { kind: 'heading', text: 'Глава I', level: 1 },
+      { kind: 'heading', text: 'Глава I — повтор', level: 2 },
+      { kind: 'heading', text: 'Первый раздел', level: 3 },
+      ...paragraphs.slice(0, 6).map((text) => ({ kind: 'paragraph', text })),
+      { kind: 'heading', text: 'Второй раздел', level: 3 },
+      ...paragraphs.slice(6, 12).map((text) => ({ kind: 'paragraph', text })),
+      { kind: 'heading', text: 'Глава II', level: 1 },
+      ...paragraphs.slice(12).map((text) => ({ kind: 'paragraph', text })),
+    ],
+  });
+  await page.evaluate(async (book) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('figlet', 2);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('books', 'readwrite');
+      tx.objectStore('books').put(book);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  }, wrapped);
+  await page.goto(`/#/book/${wrapped.id}/h1?level=2&at=0`);
+  await page.reload();
+  await expect(page.locator('.reading-title')).toHaveText('Глава I');
+  await expect(page).toHaveURL(new RegExp('/h0\\?level=1&at=0$'));
+  await page.getByRole('button', { name: 'Увеличить глубину — больше деталей' }).click();
+  await expect(page.locator('.reading-title')).toHaveText('Первый раздел');
+  await page.getByRole('button', { name: 'Следующая страница этого уровня' }).click();
+  await expect(page.locator('.reading-title')).toHaveText('Второй раздел');
+  await page.getByRole('button', { name: 'Увеличить глубину — больше деталей' }).click();
+  await expect(page.locator('.reading-title')).toHaveText('Абзац 7.');
+  await page.getByRole('button', { name: 'Уменьшить глубину — более общий обзор' }).click();
+  await expect(page.locator('.reading-title')).toHaveText('Второй раздел');
+});
