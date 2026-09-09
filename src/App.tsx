@@ -181,6 +181,7 @@ export default function App() {
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [fontSize, setFontSize] = useState(Number(getCookie('figlet_font') || 18));
   const attempts = useRef(new Set<string>());
+  const [analysisFailures, setAnalysisFailures] = useState<Record<string, string>>({});
   const fileInput = useRef<HTMLInputElement>(null);
   const restoreInput = useRef<HTMLInputElement>(null);
   const originalRef = useRef<HTMLDivElement>(null);
@@ -193,6 +194,18 @@ export default function App() {
   const selectedModel = model || config.defaultModel;
   const rawAnalysis = active?.analyses[node?.id || 'root'];
   const analysis = rawAnalysis?.model === selectedModel ? rawAnalysis : undefined;
+  const analysisKey = `${active?.id}:${node?.id}:${selectedModel}`;
+  const analysisFailure = analysisFailures[analysisKey];
+  const parentAnalysis = active?.analyses[node?.parent || ''];
+  const inheritedSummary =
+    parentAnalysis?.model === selectedModel
+      ? parentAnalysis.children.find((child) => child.id === node?.id)?.summary
+      : undefined;
+  const mapComplete =
+    analysis &&
+    node?.children.every((id) =>
+      analysis.children.some((child) => child.id === id && child.summary.trim()),
+    );
   const canAnalyze = config.sharedKey || !!key;
 
   function updateBook(id: string, transform: (book: Book) => Book) {
@@ -460,13 +473,28 @@ export default function App() {
     });
     updateBook(book.id, (b) => ({ ...b, analyses: { ...b.analyses, [nodeId]: result } }));
   }
+  async function loadAnalysis(book: Book, nodeId: string) {
+    const id = `${book.id}:${nodeId}:${selectedModel}`;
+    setAnalysisFailures((current) => ({ ...current, [id]: '' }));
+    await run('Читаю раздел и собираю карту идей…', async () => {
+      try {
+        await analyzeNode(book, nodeId);
+      } catch (e) {
+        setAnalysisFailures((current) => ({
+          ...current,
+          [id]: e instanceof Error ? e.message : 'Не удалось загрузить разбор.',
+        }));
+        throw e;
+      }
+    });
+  }
   useEffect(() => {
-    if (!active || !node || !canAnalyze || analysis || busy || view !== 'summary') return;
+    if (!active || !node || !canAnalyze || mapComplete || busy || view !== 'summary') return;
     const id = `${active.id}:${node.id}:${selectedModel}`;
     if (attempts.current.has(id)) return;
     attempts.current.add(id);
-    void run('Читаю раздел и собираю карту идей…', () => analyzeNode(active, node.id));
-  }, [active?.id, node?.id, canAnalyze, selectedModel, analysis, busy, view]);
+    void loadAnalysis(active, node.id);
+  }, [active?.id, node?.id, canAnalyze, selectedModel, mapComplete, busy, view]);
 
   async function findText(text: string, work?: Work) {
     setSourceQuery(text);
@@ -1335,31 +1363,48 @@ export default function App() {
                       )}
                     </section>
                   ) : (
-                    <section className="unanalyzed">
+                    <section className="unanalyzed" aria-live="polite">
+                      {inheritedSummary && (
+                        <div className="summary-text">
+                          <p>{inheritedSummary}</p>
+                        </div>
+                      )}
                       <Layers size={25} />
-                      <h2>{busy ? 'От текста к карте идей' : 'Увидеть общую картину'}</h2>
+                      <h2>
+                        {analysisFailure
+                          ? 'Не удалось загрузить разбор'
+                          : 'Собираем обзор и саммари разделов'}
+                      </h2>
                       <p>
-                        {busy
-                          ? 'Разбор этого уровня появится здесь. Оригинал уже можно читать.'
-                          : canAnalyze
-                            ? 'Разбор создаётся при первом открытии и остаётся в вашей библиотеке.'
-                            : 'Подключите DeepSeek, чтобы увидеть главные идеи и важность фрагментов.'}
+                        {analysisFailure ||
+                          (canAnalyze
+                            ? 'Саммари появятся автоматически. Пока можно читать оригинал или двигаться дальше.'
+                            : 'Подключите DeepSeek, чтобы увидеть главные идеи и важность фрагментов.')}
                       </p>
-                      <button
-                        className="secondary"
-                        disabled={!!busy}
-                        onClick={() =>
-                          canAnalyze
-                            ? void run('Собираю карту идей…', () => analyzeNode(active, node.id))
-                            : setModal('settings')
-                        }
-                      >
-                        {canAnalyze ? 'Разобрать этот раздел' : 'Подключить DeepSeek'}
-                      </button>
+                      {(analysisFailure || !canAnalyze) && (
+                        <button
+                          className="secondary"
+                          disabled={!!busy}
+                          onClick={() =>
+                            canAnalyze ? void loadAnalysis(active, node.id) : setModal('settings')
+                          }
+                        >
+                          {canAnalyze ? 'Повторить загрузку' : 'Подключить DeepSeek'}
+                        </button>
+                      )}
                     </section>
                   )}
                   {node.children.length > 0 && (
                     <section className="section-map">
+                      {analysis && analysisFailure && (
+                        <button
+                          className="secondary"
+                          disabled={!!busy}
+                          onClick={() => void loadAnalysis(active, node.id)}
+                        >
+                          Повторить загрузку саммари
+                        </button>
+                      )}
                       <div className="section-heading">
                         <h2>{semanticLevel === 0 ? 'Карта книги' : 'Внутри этого фрагмента'}</h2>
                         {analysis && (
@@ -1392,7 +1437,14 @@ export default function App() {
                                 </span>
                                 <div>
                                   <h3>{info?.title || child.title}</h3>
-                                  {info?.summary && <p>{info.summary}</p>}
+                                  <p>
+                                    {info?.summary ||
+                                      (analysisFailure
+                                        ? 'Саммари не загрузилось.'
+                                        : canAnalyze
+                                          ? 'Готовим саммари…'
+                                          : 'Саммари доступно после подключения DeepSeek.')}
+                                  </p>
                                   <div className="depth-meta">
                                     <span>
                                       {readingMinutes(

@@ -224,3 +224,37 @@ test('duplicate chapter wrappers are skipped and old saved links still open', as
   await page.getByRole('button', { name: 'Уменьшить глубину — более общий обзор' }).click();
   await expect(page.locator('.reading-title')).toHaveText('Второй раздел');
 });
+
+test('summaries load automatically; child overview is immediate and only errors offer retry', async ({
+  page,
+}) => {
+  const calls = await setup(page);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route('**/api/analyze', async (route) => {
+    await gate;
+    await route.fallback();
+  });
+  await page.locator('.author-work').first().click();
+  await expect(page.locator('.depth-row p').first()).toHaveText('Готовим саммари…');
+  await expect(page.getByRole('button', { name: 'Разобрать этот раздел' })).toHaveCount(0);
+  release();
+  await expect(page.locator('.saved-mark')).toBeVisible();
+  await expect(page.locator('.depth-row p')).toHaveText(Array(3).fill('Смысл этого фрагмента.'));
+  expect(calls.analyze).toBe(1);
+  let fail = true;
+  await page.route('**/api/analyze', async (route) => {
+    if (fail) {
+      fail = false;
+      await route.fulfill({ status: 503, json: { error: 'Временная ошибка' } });
+    } else await route.fallback();
+  });
+  await page.locator('.depth-row').first().click();
+  await expect(page.locator('.unanalyzed .summary-text')).toHaveText('Смысл этого фрагмента.');
+  await page.getByRole('button', { name: 'Повторить загрузку', exact: true }).click();
+  await expect(page.locator('.saved-mark')).toBeVisible();
+  await expect(page.locator('.depth-row p')).toHaveText(Array(4).fill('Смысл этого фрагмента.'));
+  expect(calls.analyze).toBe(2);
+});

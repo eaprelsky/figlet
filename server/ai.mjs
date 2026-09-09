@@ -87,15 +87,13 @@ const score = (value) => Math.max(1, Math.min(5, Math.round(Number(value) || 3))
 export async function analyze(body, key) {
   const context = selectContext(body.paragraphs);
   const children = Array.isArray(body.children)
-    ? body.children
-        .slice(0, 150)
-        .map((c) => ({
-          id: string(c.id, 150),
-          title: string(c.title, 300),
-          start: c.start,
-          end: c.end,
-          preview: string(c.preview, 1600),
-        }))
+    ? body.children.slice(0, 150).map((c) => ({
+        id: string(c.id, 150),
+        title: string(c.title, 300),
+        start: c.start,
+        end: c.end,
+        preview: string(c.preview, 1600),
+      }))
     : [];
   const result = await completion({
     key,
@@ -111,6 +109,14 @@ export async function analyze(body, key) {
   });
   if (!string(result.summary))
     throw new AppError('В ответе модели отсутствует разбор. Повторите запрос.', 502);
+  if (
+    children.some(
+      (c) =>
+        !Array.isArray(result.children) ||
+        !result.children.some((r) => r.id === c.id && string(r.summary).trim()),
+    )
+  )
+    throw new AppError('Модель не завершила саммари разделов. Повторите загрузку.', 502);
   return {
     summary: string(result.summary),
     ideas: Array.isArray(result.ideas)
