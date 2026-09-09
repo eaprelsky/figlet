@@ -258,3 +258,44 @@ test('summaries load automatically; child overview is immediate and only errors 
   await expect(page.locator('.depth-row p')).toHaveText(Array(4).fill('Смысл этого фрагмента.'));
   expect(calls.analyze).toBe(2);
 });
+
+test('a fresh device opens a shared deep link and sees the public library', async ({ page }) => {
+  await setup(page);
+  await page.route('**/api/config', (r) =>
+    r.fulfill({
+      json: { sharedKey: true, sharedLibrary: true, defaultModel: 'deepseek-v4-flash' },
+    }),
+  );
+  await page.route('**/api/library', (r) =>
+    r.fulfill({
+      json: {
+        books: [
+          {
+            id: fixture.id,
+            title: fixture.title,
+            author: fixture.author,
+            sourceUrl: 'https://example.org/book',
+            paragraphs: 36,
+          },
+        ],
+      },
+    }),
+  );
+  await page.route(`**/api/library/${fixture.id}`, (r) => r.fulfill({ json: fixture }));
+  await page.goto(`/#/book/${fixture.id}/h0%3A0-3?level=2&at=0`);
+  await page.reload();
+  await expect(page.locator('.reading-title')).toHaveText('Абзац 1.');
+  await expect(page.locator('.saved-mark')).toBeVisible();
+  await page.getByRole('tab', { name: 'Оригинал' }).click();
+  await expect(page.locator('.original-paragraph p')).toHaveText(paragraphs.slice(0, 3));
+  await page
+    .getByRole('navigation', { name: 'Путь в книге' })
+    .getByRole('button', { name: 'Библиотека', exact: true })
+    .click();
+  const library = page
+    .locator('.results-section')
+    .filter({ has: page.getByRole('heading', { name: 'Общая библиотека' }) });
+  await expect(library).toContainText(fixture.title);
+  await library.locator('.work-row').click();
+  await expect(page.locator('.reading-title')).toHaveText('Абзац 1.');
+});

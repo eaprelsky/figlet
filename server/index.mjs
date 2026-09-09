@@ -8,8 +8,13 @@ import { AppError } from './network.mjs';
 import { importUrl, makeBook, parseFile, searchSources } from './books.mjs';
 import { analyze, ask, discover, defaultModel, models, providerName } from './ai.mjs';
 import { withAiBudget } from './budget.mjs';
+import { createCache } from './cache.mjs';
 
-export function createApp() {
+export function createApp({
+  cache = createCache(),
+  ai = { analyze, ask, discover },
+  loadBook = importUrl,
+} = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 'loopback');
@@ -71,9 +76,19 @@ export function createApp() {
       defaultModel,
       providerName,
       maxUploadMB: 10,
+      sharedLibrary: true,
     }),
   );
   app.get('/api/models', async (req, res) => res.json({ models: await models(key(req)) }));
+  app.get('/api/library', (req, res) => {
+    const query = typeof req.query.q === 'string' ? req.query.q.slice(0, 500).trim() : '';
+    res.json({ books: cache.library(query) });
+  });
+  app.get('/api/library/:id', (req, res) => {
+    const book = cache.book(req.params.id);
+    if (!book) throw new AppError('Книга пока не добавлена в общую библиотеку.', 404);
+    res.json(book);
+  });
   app.get('/api/search', async (req, res) => {
     if (typeof req.query.q !== 'string' || !req.query.q.trim() || req.query.q.length > 500)
       throw new AppError('Введите название книги или автора (до 500 символов).');
@@ -82,7 +97,18 @@ export function createApp() {
   app.post('/api/import/url', async (req, res) => {
     if (typeof req.body.url !== 'string' || req.body.url.length > 4000)
       throw new AppError('Укажите URL книги.');
-    res.json(await importUrl(req.body.url, req.body.title, req.body.author));
+    const url = new URL(req.body.url);
+    url.hash = '';
+    const result = await cache.remember(
+      'import',
+      { url: url.href, title: req.body.title || '', author: req.body.author || '' },
+      async () => {
+        const book = await loadBook(url.href, req.body.title, req.body.author);
+        cache.saveBook(book);
+        return book;
+      },
+    );
+    res.set('X-Figlet-Cache', result.cache).json(result.value);
   });
   app.post('/api/import/file', upload.single('file'), async (req, res) => {
     if (!req.file) throw new AppError('Выберите файл книги.');
@@ -97,30 +123,64 @@ export function createApp() {
       }),
     );
   });
-  for (const [route, handler] of Object.entries({ analyze, ask, discover })) {
-    app.post(`/api/${route}`, aiLimit, async (req, res) =>
-      res.json(await withAiBudget(() => handler(req.body, key(req)))),
-    );
+  for (const [route, handler] of Object.entries(ai)) {
+    app.post(`/api/${route}`, async (req, res) => {
+      const generate = async () => {
+        // Charge only the request that actually invokes the model, not cache hits or waiters.
+        await new Promise((resolve, reject) => {
+          const finished = () => reject(new AppError('Лимит новых разборов исчерпан.', 429));
+          res.once('finish', finished);
+          aiLimit(req, res, (error) => {
+            res.off('finish', finished);
+            error ? reject(error) : resolve();
+          });
+        });
+        return withAiBudget(() => handler(req.body, key(req)));
+      };
+      if (route === 'ask') return res.json(await generate());
+      const { model = defaultModel } = req.body;
+      const input =
+        route === 'analyze'
+          ? {
+              model,
+              title: req.body.title,
+              author: req.body.author,
+              section: req.body.section,
+              paragraphs: req.body.paragraphs,
+              children: req.body.children,
+            }
+          : {
+              model,
+              query: String(req.body.query || '')
+                .trim()
+                .toLowerCase(),
+            };
+      const result = await cache.remember(
+        route,
+        { provider: process.env.AI_BASE_URL || 'https://api.deepseek.com', ...input },
+        generate,
+      );
+      res.set('X-Figlet-Cache', result.cache).json(result.value);
+    });
   }
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Такого API-метода нет.' }));
   const dist = fileURLToPath(new URL('../dist', import.meta.url));
   app.use(express.static(dist, { index: false, maxAge: '1h' }));
   app.get('/{*path}', (_req, res) => res.sendFile(path.join(dist, 'index.html')));
   app.use((error, _req, res, _next) => {
+    if (res.headersSent) return;
     const known = error instanceof AppError;
     const oversized = error.code === 'LIMIT_FILE_SIZE' || error.type === 'entity.too.large';
     // Do not log request bodies, source documents, provider responses or credentials.
     if (!known && !oversized)
       console.error('Request failed:', error.name, error.code || 'unclassified');
-    res
-      .status(oversized ? 413 : known ? error.status : 500)
-      .json({
-        error: oversized
-          ? 'Файл слишком большой. Максимум — 10 МБ.'
-          : known
-            ? error.message
-            : 'Не удалось обработать запрос. Попробуйте другой файл, ссылку или повторите позже.',
-      });
+    res.status(oversized ? 413 : known ? error.status : 500).json({
+      error: oversized
+        ? 'Файл слишком большой. Максимум — 10 МБ.'
+        : known
+          ? error.message
+          : 'Не удалось обработать запрос. Попробуйте другой файл, ссылку или повторите позже.',
+    });
   });
   return app;
 }

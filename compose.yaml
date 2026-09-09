@@ -10,6 +10,9 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 3400
+      CACHE_DB: /app/data/cache.sqlite
+    volumes:
+      - figlet-data:/app/data
     mem_limit: 768m
     cpus: 1.5
     pids_limit: 100
@@ -25,3 +28,5 @@ services:
       options:
         max-size: 5m
         max-file: '3'
+volumes:
+  figlet-data:

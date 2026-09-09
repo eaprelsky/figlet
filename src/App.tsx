@@ -41,7 +41,19 @@ type Source = { title: string; url: string; snippet: string; source: string };
 type Work = { title: string; author: string; reason: string; importance: number; query: string };
 type Route = { title: string; intro: string; works: Work[] };
 type Author = Route & { id: string; name: string; currentWork?: string };
-type Config = { sharedKey: boolean; defaultModel: string; providerName?: string };
+type Config = {
+  sharedKey: boolean;
+  defaultModel: string;
+  providerName?: string;
+  sharedLibrary?: boolean;
+};
+type LibraryBook = {
+  id: string;
+  title: string;
+  author: string;
+  sourceUrl: string;
+  paragraphs: number;
+};
 const starters = [
   {
     author: 'Владимир Ленин',
@@ -181,6 +193,9 @@ export default function App() {
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [fontSize, setFontSize] = useState(Number(getCookie('figlet_font') || 18));
   const attempts = useRef(new Set<string>());
+  const libraryAttempts = useRef(new Set<string>());
+  const [sharedBooks, setSharedBooks] = useState<LibraryBook[]>([]);
+  const [libraryLoading, setLibraryLoading] = useState('');
   const [analysisFailures, setAnalysisFailures] = useState<Record<string, string>>({});
   const fileInput = useRef<HTMLInputElement>(null);
   const restoreInput = useRef<HTMLInputElement>(null);
@@ -495,6 +510,45 @@ export default function App() {
     attempts.current.add(id);
     void loadAnalysis(active, node.id);
   }, [active?.id, node?.id, canAnalyze, selectedModel, mapComplete, busy, view]);
+  useEffect(() => {
+    if (config.sharedLibrary)
+      void api('library')
+        .then((data) => setSharedBooks(data.books))
+        .catch(() => {});
+  }, [config.sharedLibrary]);
+  useEffect(() => {
+    if (!loaded || !config.sharedLibrary || !route?.bookId) return;
+    const id = route.bookId;
+    if (libraryAttempts.current.has(id)) return;
+    libraryAttempts.current.add(id);
+    if (!active) {
+      setLibraryLoading(id);
+      void api(`library/${encodeURIComponent(id)}`)
+        .then(async (book) => {
+          const normalized = frontierAt(normalizeBook(book), route.level).book;
+          const restoredId = resolveNodeId(normalized, route.nodeId);
+          if (normalized.nodes[restoredId]) {
+            normalized.currentNode = restoredId;
+            normalized.currentLevel = route.level;
+            normalized.currentAnchor = route.anchor;
+          }
+          await storage.save(normalized);
+          booksRef.current = [...booksRef.current.filter((b) => b.id !== id), normalized];
+          setBooks(booksRef.current);
+        })
+        .catch((e) => setError(e.message))
+        .finally(() => setLibraryLoading(''));
+    } else if (active.sourceUrl) {
+      // Re-fetch public originals rather than trusting client-supplied library documents.
+      void api(`library/${encodeURIComponent(id)}`)
+        .catch(() =>
+          api('import/url', { url: active.sourceUrl, title: active.title, author: active.author }),
+        )
+        .then(() => api('library'))
+        .then((data) => setSharedBooks(data.books))
+        .catch(() => {});
+    }
+  }, [loaded, config.sharedLibrary, route?.bookId, active?.id]);
 
   async function findText(text: string, work?: Work) {
     setSourceQuery(text);
@@ -540,6 +594,18 @@ export default function App() {
       return;
     }
     await run('Ищу полный текст книги…', async () => {
+      if (config.sharedLibrary) {
+        const library = await api(`library?q=${encodeURIComponent(work.title)}`);
+        const saved = library.books.find(
+          (b: LibraryBook) =>
+            b.title.toLowerCase() === work.title.toLowerCase() &&
+            b.author.toLowerCase() === work.author.toLowerCase(),
+        );
+        if (saved) {
+          await addBook({ ...(await api(`library/${saved.id}`)), authorId: owner?.id });
+          return;
+        }
+      }
       const data = await api(`search?q=${encodeURIComponent(work.title)}`);
       setSourceQuery(work.title);
       setSources(data.results);
@@ -794,7 +860,7 @@ export default function App() {
             <Layers size={15} />
             Разборы сохраняются
             <br />
-            <span>на этом устройстве</span>
+            <span>на сервере и на устройстве</span>
           </p>
           <button onClick={() => setModal('about')}>
             <CircleHelp size={16} />
@@ -835,10 +901,15 @@ export default function App() {
         ) : route && !active && !activeAuthor ? (
           <div className="empty-state">
             <BookOpen size={36} />
-            <h1>Этой книги нет на устройстве</h1>
+            <h1>
+              {libraryLoading === route.bookId
+                ? 'Открываю книгу с сервера…'
+                : 'Книга пока недоступна'}
+            </h1>
             <p>
-              Библиотека хранится в вашем браузере. Импортируйте книгу или откройте Figlet на
-              прежнем устройстве.
+              {libraryLoading === route.bookId
+                ? 'Загружаю оригинал и структуру из общей библиотеки.'
+                : 'Найдите книгу в общей библиотеке или добавьте её по ссылке или из файла.'}
             </p>
             <button className="primary" onClick={() => navigate()}>
               Найти книгу
@@ -1036,6 +1107,41 @@ export default function App() {
                 </div>
               )}
             </section>
+            {sharedBooks.length > 0 && (
+              <section className="results-section">
+                <div className="section-heading">
+                  <h2>Общая библиотека</h2>
+                  <span>{sharedBooks.length} книг</span>
+                </div>
+                <p className="subtle-note">
+                  Книги из открытых источников. Готовые разборы общие для всех читателей.
+                </p>
+                <div className="work-list">
+                  {sharedBooks.map((b) => (
+                    <button
+                      className="work-row"
+                      key={b.id}
+                      disabled={!!busy}
+                      onClick={() =>
+                        void run('Открываю книгу из общей библиотеки…', async () => {
+                          await addBook(await api(`library/${b.id}`));
+                        })
+                      }
+                    >
+                      <BookOpen size={20} />
+                      <div>
+                        <div className="work-title">
+                          <h3>{b.title}</h3>
+                        </div>
+                        <small>{b.author}</small>
+                        <p>{b.paragraphs} абзацев · Открыть книгу</p>
+                      </div>
+                      <ChevronRight size={18} />
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
             {guide && (
               <section className="results-section">
                 <div className="section-heading">
@@ -1793,7 +1899,8 @@ export default function App() {
           </button>
           <p className="subtle-note">
             Добавляйте тексты, которые можете законно читать. PDF-сканам требуется распознавание.
-            Книга сохраняется только в вашем браузере.
+            Книги по публичным ссылкам попадают в общую библиотеку. Загруженные файлы в каталоге не
+            публикуются. Готовые разборы кэшируются на сервере.
           </p>
           {busy && (
             <p role="status" className="modal-copy">
@@ -1887,8 +1994,8 @@ export default function App() {
           <section className="settings-section">
             <h3>Ваша библиотека</h3>
             <p className="modal-copy">
-              {books.length} книг на этом устройстве. Очистка данных сайта удалит книги и разборы.
-              Экспортируйте библиотеку для переноса.
+              {books.length} книг на этом устройстве. Общие разборы хранятся на сервере; позиция
+              чтения, личные файлы и вопросы — в браузере. Экспортируйте библиотеку для переноса.
             </p>
             <div className="settings-actions">
               <button
@@ -2049,8 +2156,9 @@ export default function App() {
               помогают двигаться в любую сторону.
             </p>
             <p className="subtle-note">
-              Важность — субъективная оценка модели. Проверяйте спорные выводы по оригиналу.
-              Библиотека хранится в браузере; экспорт позволяет перенести её на другое устройство.
+              Важность — субъективная оценка модели. Проверяйте спорные выводы по оригиналу. Общие
+              книги и разборы хранятся на сервере. Браузер сохраняет копии для чтения офлайн, личные
+              файлы, вопросы и вашу позицию.
             </p>
           </div>
           <button className="primary full" onClick={() => setModal(null)}>
