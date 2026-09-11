@@ -28,6 +28,9 @@ export function createCache(filename = process.env.CACHE_DB || '.figlet-data/cac
     CREATE TABLE IF NOT EXISTS books (id TEXT PRIMARY KEY, document TEXT NOT NULL, search TEXT NOT NULL, created INTEGER NOT NULL);`);
   const pending = new Map();
   return {
+    // Shared with catalog/auth/billing so every module sees the same SQLite file.
+    raw: db,
+    dir: filename === ':memory:' ? null : path.dirname(path.resolve(filename)),
     async remember(kind, input, generate) {
       const key = cacheKey(kind, input);
       const saved = db.prepare('SELECT value FROM results WHERE key=?').get(key);

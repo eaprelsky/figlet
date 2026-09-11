@@ -8,12 +8,14 @@ import {
   Check,
   ChevronRight,
   CircleHelp,
+  CreditCard,
   Download,
   FileText,
   Layers,
   Library,
   Link as LinkIcon,
   LoaderCircle,
+  LogOut,
   Menu,
   MessageCircle,
   Moon,
@@ -23,6 +25,7 @@ import {
   Sun,
   Trash2,
   Upload,
+  User,
   X,
 } from 'lucide-react';
 import {
@@ -41,11 +44,34 @@ type Source = { title: string; url: string; snippet: string; source: string };
 type Work = { title: string; author: string; reason: string; importance: number; query: string };
 type Route = { title: string; intro: string; works: Work[] };
 type Author = Route & { id: string; name: string; currentWork?: string };
+type Account = { login: string; isAdmin?: boolean };
+type Subscription = { until?: number; expired?: number };
+type Quota = {
+  used: number;
+  limit: number;
+  subscription: Subscription | null;
+};
 type Config = {
   sharedKey: boolean;
   defaultModel: string;
   providerName?: string;
   sharedLibrary?: boolean;
+  freeBooksPerWeek?: number;
+  subscription?: { enabled: boolean; price: number; days: number };
+};
+type Suggestion = {
+  title: string;
+  author: string;
+  confidence: number;
+  reason?: string;
+  applied?: boolean;
+};
+type BookMetaDraft = {
+  bookId: string;
+  title: string;
+  author: string;
+  suggestion?: Suggestion | null;
+  replace?: Book | null;
 };
 type LibraryBook = {
   id: string;
@@ -53,6 +79,7 @@ type LibraryBook = {
   author: string;
   sourceUrl: string;
   paragraphs: number;
+  editions?: number;
 };
 const starters = [
   {
@@ -84,12 +111,23 @@ const starters = [
 function readRoute() {
   const [pathname, search] = location.hash.slice(2).split('?');
   const [kind, bookId, nodeId] = pathname.split('/');
+  if (kind === 'billing')
+    return {
+      authorId: '',
+      bookId: '',
+      nodeId: '',
+      level: 0,
+      anchor: 0,
+      payment: new URLSearchParams(search).get('payment') || '',
+      billing: true,
+    };
   if (kind === 'author')
     return {
       bookId: '',
       nodeId: '',
       level: -1,
       anchor: 0,
+      payment: '',
       authorId: decodeURIComponent(bookId || ''),
     };
   return kind === 'book'
@@ -99,6 +137,7 @@ function readRoute() {
         bookId: decodeURIComponent(bookId || ''),
         nodeId: decodeURIComponent(nodeId || 'root'),
         level: Math.max(0, Math.min(12, Number(new URLSearchParams(search).get('level') || 0))),
+        payment: '',
       }
     : null;
 }
@@ -171,9 +210,23 @@ export default function App() {
   const [theme, setTheme] = useState(decodeURIComponent(getCookie('figlet_theme') || 'system'));
   const [route, setRoute] = useState(readRoute);
   const [sidebar, setSidebar] = useState(false);
-  const [modal, setModal] = useState<'settings' | 'import' | 'about' | 'question' | 'find' | null>(
-    null,
+  const [modal, setModal] = useState<
+    'settings' | 'import' | 'about' | 'question' | 'find' | 'account' | 'bookMeta' | null
+  >(null);
+  const [account, setAccount] = useState<Account | null>(null);
+  const [quota, setQuota] = useState<Quota | null>(null);
+  const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
+  const [authLogin, setAuthLogin] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [aiProvider, setAiProvider] = useState<'openai' | 'anthropic' | ''>(
+    (sessionStorage.getItem('figlet_provider') as 'openai' | 'anthropic' | null) || '',
   );
+  const [aiBaseUrl, setAiBaseUrl] = useState(sessionStorage.getItem('figlet_baseurl') || '');
+  const [bookMeta, setBookMeta] = useState<BookMetaDraft | null>(null);
+  const [metaFile, setMetaFile] = useState<File | null>(null);
+  const [indexProgress, setIndexProgress] = useState<
+    { status: string; done: number; total: number; error?: string } | null
+  >(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -198,6 +251,7 @@ export default function App() {
   const [libraryLoading, setLibraryLoading] = useState('');
   const [analysisFailures, setAnalysisFailures] = useState<Record<string, string>>({});
   const fileInput = useRef<HTMLInputElement>(null);
+  const metaInput = useRef<HTMLInputElement>(null);
   const restoreInput = useRef<HTMLInputElement>(null);
   const originalRef = useRef<HTMLDivElement>(null);
   const activeAuthor = authors.find((a) => a.id === route?.authorId);
@@ -257,6 +311,11 @@ export default function App() {
     setUrl('');
     setImportTitle('');
     setImportAuthor('');
+    // Build the whole-book map in the background: current view first, then by importance.
+    requestIndex(expanded.id, 'root');
+  }
+  function requestIndex(bookId: string, current: string) {
+    void api('index', { bookId, current }).catch(() => {});
   }
   function navigate(
     bookId?: string,
@@ -347,6 +406,10 @@ export default function App() {
   async function api(path: string, body?: unknown): Promise<any> {
     const headers: Record<string, string> = {};
     if (key) headers['x-deepseek-key'] = key;
+    if (aiProvider && aiBaseUrl) {
+      headers['x-ai-provider'] = aiProvider;
+      headers['x-ai-base-url'] = aiBaseUrl;
+    }
     const isForm = body instanceof FormData;
     if (body && !isForm) headers['Content-Type'] = 'application/json';
     const result = await fetch(`/api/${path}`, {
@@ -365,8 +428,58 @@ export default function App() {
     } catch {
       throw new Error('Сервер не ответил. Проверьте подключение и повторите запрос.');
     }
-    if (!result.ok) throw new Error(data.error || 'Не удалось выполнить запрос.');
+    if (!result.ok) {
+      if (result.status === 402 && data?.code === 'book-quota') {
+        setModal('settings');
+        void refreshQuota();
+      }
+      throw new Error(data.error || 'Не удалось выполнить запрос.');
+    }
     return data;
+  }
+  function refreshQuota() {
+    return fetch('/api/quota')
+      .then((r) => r.json())
+      .then(setQuota)
+      .catch(() => {});
+  }
+  async function subscribe() {
+    await run('Создаю платёж…', async () => {
+      const data = await api('billing/checkout');
+      if (!data.confirmationUrl) throw new Error('Не удалось создать платёж.');
+      sessionStorage.setItem('figlet_payment', data.paymentId);
+      location.href = data.confirmationUrl;
+    });
+  }
+  // Confirm recognised metadata, rename a book, or re-import a file under a new name.
+  async function saveBookMeta() {
+    if (!bookMeta) return;
+    const { bookId, title, author, replace } = bookMeta;
+    await run('Сохраняю название и автора…', async () => {
+      if (metaFile) {
+        const data = new FormData();
+        data.append('file', metaFile);
+        data.append('title', title);
+        if (author) data.append('author', author);
+        const book: Book = await api('import/file', data);
+        await addBook({ ...book, title, author, authorId: activeAuthor?.id });
+        if (book.id !== bookId && booksRef.current.some((b) => b.id === bookId)) {
+          await storage.remove(bookId);
+          booksRef.current = booksRef.current.filter((b) => b.id !== bookId);
+          setBooks(booksRef.current);
+        }
+      } else if (replace) {
+        await api(`library/${encodeURIComponent(bookId)}/rename`, { title, author });
+        await addBook({ ...replace, title, author, authorId: activeAuthor?.id });
+      } else {
+        await api(`library/${encodeURIComponent(bookId)}/rename`, { title, author });
+        updateBook(bookId, (b) => ({ ...b, title, author, updatedAt: Date.now() }));
+      }
+      setBookMeta(null);
+      setMetaFile(null);
+      setModal(null);
+      setNotice('Название и автор сохранены.');
+    });
   }
   async function run(label: string, action: () => Promise<void>) {
     if (busy) return;
@@ -455,6 +568,14 @@ export default function App() {
     else sessionStorage.removeItem('figlet_key');
   }, [key, rememberKey]);
   useEffect(() => {
+    if (aiProvider) sessionStorage.setItem('figlet_provider', aiProvider);
+    else sessionStorage.removeItem('figlet_provider');
+  }, [aiProvider]);
+  useEffect(() => {
+    if (aiBaseUrl) sessionStorage.setItem('figlet_baseurl', aiBaseUrl);
+    else sessionStorage.removeItem('figlet_baseurl');
+  }, [aiBaseUrl]);
+  useEffect(() => {
     setCookie('figlet_font', String(fontSize));
   }, [fontSize]);
   useEffect(() => {
@@ -468,6 +589,8 @@ export default function App() {
     const section = expanded.nodes[nodeId];
     updateBook(book.id, (b) => expandNode(b, nodeId));
     const result: Analysis = await api('analyze', {
+      bookId: book.id,
+      nodeId,
       title: book.title,
       author: book.author,
       section: section.title,
@@ -510,6 +633,111 @@ export default function App() {
     attempts.current.add(id);
     void loadAnalysis(active, node.id);
   }, [active?.id, node?.id, canAnalyze, selectedModel, mapComplete, busy, view]);
+  // Whole-book map: poll the background indexer and merge whatever is ready.
+  useEffect(() => {
+    setIndexProgress(null);
+    if (!active) return;
+    let stopped = false;
+    let lastStatus = '';
+    const poll = async () => {
+      if (stopped || document.hidden) return;
+      try {
+        const data = await api(`index/${active.id}?model=${encodeURIComponent(selectedModel)}`);
+        if (stopped) return;
+        lastStatus = data.status;
+        setIndexProgress(data);
+        const remote = data.analyses || {};
+        updateBook(active.id, (b) => {
+          let changed = false;
+          const analyses = { ...b.analyses };
+          for (const [nodeId, value] of Object.entries<any>(remote)) {
+            if (
+              value &&
+              (!analyses[nodeId] || (analyses[nodeId].createdAt || 0) < (value.createdAt || 0))
+            ) {
+              analyses[nodeId] = value;
+              changed = true;
+            }
+          }
+          return changed ? { ...b, analyses } : b;
+        });
+      } catch {
+        /* offline or old server: lazy analysis still works */
+      }
+    };
+    void poll();
+    const timer = setInterval(() => {
+      if (['done', 'failed', 'idle'].includes(lastStatus)) return;
+      void poll();
+    }, 5000);
+    const onVisible = () => {
+      if (!document.hidden && !['done', 'failed', 'idle'].includes(lastStatus)) void poll();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [active?.id, selectedModel]);
+  useEffect(() => {
+    if (!active || !node) return;
+    // Idle/paused jobs get a nudge pointing at what the reader opened right now.
+    if (indexProgress && !['idle', 'paused', 'failed'].includes(indexProgress.status)) return;
+    requestIndex(active.id, node.id);
+  }, [active?.id, node?.id, indexProgress?.status]);
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then((r) => r.json())
+      .then((data) => {
+        setAccount(data.user || null);
+        setQuota({
+          used: data.used,
+          limit: data.limit,
+          subscription: data.subscription || null,
+        });
+      })
+      .catch(() => {});
+  }, []);
+  // Returning from the payment page: confirm and show the subscription state.
+  useEffect(() => {
+    if (!route?.payment && location.hash.slice(0, 9) !== '#/billing') return;
+    const paymentId =
+      route?.payment || sessionStorage.getItem('figlet_payment') || '';
+    if (!paymentId) return;
+    let stopped = false;
+    const confirm = async (attempt: number) => {
+      try {
+        const data = await api(`billing/status?payment_id=${encodeURIComponent(paymentId)}`);
+        if (stopped) return;
+        if (data.status === 'succeeded') {
+          sessionStorage.removeItem('figlet_payment');
+          setNotice('Подписка активна. Спасибо!');
+          void refreshQuota();
+          navigate();
+          return;
+        }
+        if (attempt < 5) setTimeout(() => void confirm(attempt + 1), 2500);
+        else {
+          setNotice(
+            data.status === 'pending'
+              ? 'Платёж ещё подтверждается. Обновите страницу через минуту.'
+              : 'Платёж не завершён. Попробуйте ещё раз.',
+          );
+          navigate();
+        }
+      } catch {
+        if (attempt < 2) setTimeout(() => void confirm(attempt + 1), 2500);
+        else {
+          navigate();
+        }
+      }
+    };
+    void confirm(0);
+    return () => {
+      stopped = true;
+    };
+  }, [route?.payment]);
   useEffect(() => {
     if (config.sharedLibrary)
       void api('library')
@@ -646,11 +874,23 @@ export default function App() {
       setError('Файл слишком большой. Максимум — 10 МБ.');
       return;
     }
-    await run('Извлекаю текст и оглавление…', async () => {
+    await run('Извлекаю текст и определяю книгу…', async () => {
       const data = new FormData();
       data.append('file', file);
       if (importTitle) data.append('title', importTitle);
-      const book = await api('import/file', data);
+      const book = (await api('import/file', data)) as Book & { suggestion?: Suggestion | null };
+      // Unrecognised books ask the reader before entering the catalog under a filename.
+      if (book.suggestion && !book.suggestion.applied) {
+        setBookMeta({
+          bookId: book.id,
+          title: book.suggestion.title || book.title,
+          author: book.suggestion.author || importAuthor || activeAuthor?.name || book.author,
+          suggestion: book.suggestion,
+          replace: book,
+        });
+        setModal('bookMeta');
+        return;
+      }
       await addBook({
         ...book,
         author: importAuthor || activeAuthor?.name || book.author,
@@ -749,6 +989,18 @@ export default function App() {
             Ваша личная библиотека
           </span>
           <button
+            className="icon-button account-chip"
+            aria-label={account ? `Аккаунт: ${account.login}` : 'Войти в аккаунт'}
+            title={account ? account.login : 'Войти (необязательно)'}
+            onClick={() => {
+              setAuthTab('login');
+              setModal('account');
+            }}
+          >
+            <User size={19} />
+            {account && <span className="account-name">{account.login}</span>}
+          </button>
+          <button
             className="icon-button"
             aria-label="Переключить тему"
             title="Переключить тему"
@@ -762,7 +1014,10 @@ export default function App() {
             className="icon-button"
             aria-label="Настройки"
             title="Настройки"
-            onClick={() => setModal('settings')}
+            onClick={() => {
+              void refreshQuota();
+              setModal('settings');
+            }}
           >
             <Settings size={20} />
           </button>
@@ -900,20 +1155,30 @@ export default function App() {
           </div>
         ) : route && !active && !activeAuthor ? (
           <div className="empty-state">
-            <BookOpen size={36} />
-            <h1>
-              {libraryLoading === route.bookId
-                ? 'Открываю книгу с сервера…'
-                : 'Книга пока недоступна'}
-            </h1>
-            <p>
-              {libraryLoading === route.bookId
-                ? 'Загружаю оригинал и структуру из общей библиотеки.'
-                : 'Найдите книгу в общей библиотеке или добавьте её по ссылке или из файла.'}
-            </p>
-            <button className="primary" onClick={() => navigate()}>
-              Найти книгу
-            </button>
+            {route.payment || location.hash.slice(0, 9) === '#/billing' ? (
+              <>
+                <LoaderCircle className="spin" size={36} />
+                <h1>Подтверждаю платёж…</h1>
+                <p>Проверяю статус в платёжном сервисе. Это займёт несколько секунд.</p>
+              </>
+            ) : (
+              <>
+                <BookOpen size={36} />
+                <h1>
+                  {libraryLoading === route.bookId
+                    ? 'Открываю книгу с сервера…'
+                    : 'Книга пока недоступна'}
+                </h1>
+                <p>
+                  {libraryLoading === route.bookId
+                    ? 'Загружаю оригинал и структуру из общей библиотеки.'
+                    : 'Найдите книгу в общей библиотеке или добавьте её по ссылке или из файла.'}
+                </p>
+                <button className="primary" onClick={() => navigate()}>
+                  Найти книгу
+                </button>
+              </>
+            )}
           </div>
         ) : activeAuthor ? (
           <>
@@ -1358,6 +1623,16 @@ export default function App() {
                   {readingMinutes(active.paragraphs.slice(node.start, node.end))} мин оригинала
                 </span>
                 <span>{node.end - node.start} абзацев</span>
+                {indexProgress?.status === 'running' && (
+                  <span className="index-progress">
+                    <LoaderCircle className="spin" size={13} />
+                    Карта книги: {indexProgress.done}
+                    {indexProgress.total ? ` из ${indexProgress.total}` : ''}
+                  </span>
+                )}
+                {indexProgress?.status === 'paused' && (
+                  <span className="index-progress">Карта книги продолжится позже</span>
+                )}
                 {analysis && (
                   <span className="saved-mark">
                     <Check size={13} />
@@ -1747,6 +2022,16 @@ export default function App() {
       />
       <input
         className="hidden-input"
+        ref={metaInput}
+        type="file"
+        accept=".txt,.md,.html,.htm,.epub,.fb2,.pdf"
+        onChange={(e) => {
+          setMetaFile(e.target.files?.[0] || null);
+          e.target.value = '';
+        }}
+      />
+      <input
+        className="hidden-input"
         ref={restoreInput}
         type="file"
         accept=".json"
@@ -1899,8 +2184,9 @@ export default function App() {
           </button>
           <p className="subtle-note">
             Добавляйте тексты, которые можете законно читать. PDF-сканам требуется распознавание.
-            Книги по публичным ссылкам попадают в общую библиотеку. Загруженные файлы в каталоге не
-            публикуются. Готовые разборы кэшируются на сервере.
+            Загруженные книги и ссылки попадают в общую библиотеку: сервер хранит оригинал, разбор и
+            сверяет редакции, чтобы собрать полный текст. Личная позиция чтения и вопросы остаются
+            в вашем браузере.
           </p>
           {busy && (
             <p role="status" className="modal-copy">
@@ -1935,12 +2221,36 @@ export default function App() {
             </div>
           </section>
           <section className="settings-section">
-            <h3>DeepSeek</h3>
+            <h3>Разборы и AI</h3>
             <p className="modal-copy">
               {config.sharedKey
-                ? 'Подключён серверный ключ. Можно читать и задавать вопросы сразу.'
-                : 'Добавьте личный ключ для разборов и вопросов по тексту.'}
+                ? `Сервер бесплатно разбирает ${config.freeBooksPerWeek || 5} новых книг в неделю.`
+                : 'Добавьте свой ключ для разборов и вопросов по тексту.'}
             </p>
+            {quota && (
+              <div className="quota-state">
+                {quota.subscription?.until ? (
+                  <span className="saved-mark">
+                    <Check size={14} />
+                    Подписка до {new Date(quota.subscription.until).toLocaleDateString('ru-RU')}
+                  </span>
+                ) : (
+                  <span>
+                    Новых книг на этой неделе: {quota.used} из {quota.limit}
+                  </span>
+                )}
+                {config.subscription?.enabled && !quota.subscription?.until && (
+                  <button
+                    className="secondary"
+                    disabled={!!busy}
+                    onClick={() => void subscribe()}
+                  >
+                    <CreditCard size={15} />
+                    Подписка — {config.subscription.price} ₽ / {config.subscription.days} дней
+                  </button>
+                )}
+              </div>
+            )}
             <label className="field">
               {config.sharedKey ? 'Личный ключ (необязательно)' : 'API-ключ'}
               <input
@@ -1959,6 +2269,46 @@ export default function App() {
               />
               Помнить личный ключ до закрытия вкладки
             </label>
+            <details className="provider-details">
+              <summary>Свой провайдер (OpenAI-совместимый или Anthropic)</summary>
+              <p className="subtle-note">
+                После исчерпания бесплатных книг можно указать собственный шлюз: базовый URL, модель
+                и ключ. Ключ передаётся только в ваш шлюз и не сохраняется на сервере.
+              </p>
+              <div className="theme-options">
+                {(
+                  [
+                    ['openai', 'OpenAI-совместимый'],
+                    ['anthropic', 'Anthropic'],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    className={aiProvider === value ? 'selected' : ''}
+                    onClick={() => setAiProvider(aiProvider === value ? '' : value)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {aiProvider && (
+                <>
+                  <label className="field">
+                    Базовый URL
+                    <input
+                      type="url"
+                      placeholder="https://api.example.com/v1"
+                      value={aiBaseUrl}
+                      onChange={(e) => setAiBaseUrl(e.target.value.trim())}
+                    />
+                  </label>
+                  <p className="subtle-note">
+                    Публичный https-адрес на порту 80 или 443. Для OpenAI-совместимых — путь до
+                    корня API; /chat/completions добавится сам.
+                  </p>
+                </>
+              )}
+            </details>
             <label className="field">
               Модель
               <input
@@ -1987,8 +2337,8 @@ export default function App() {
               Получить доступные модели
             </button>
             <p className="subtle-note">
-              Текст текущего раздела отправляется DeepSeek для разбора. Ключ передаётся через сервер
-              по HTTPS и не включается в архив библиотеки.
+              Текст текущего раздела отправляется выбранному провайдеру для разбора. Ключ передаётся
+              через сервер по HTTPS и не включается в архив библиотеки.
             </p>
           </section>
           <section className="settings-section">
@@ -2022,22 +2372,41 @@ export default function App() {
               </button>
             </div>
             {active && (
-              <button
-                className="delete-book"
-                onClick={() =>
-                  void run('Удаляю книгу с устройства…', async () => {
-                    await storage.remove(active.id);
-                    booksRef.current = booksRef.current.filter((b) => b.id !== active.id);
-                    setBooks(booksRef.current);
-                    navigate();
-                    setModal(null);
-                    setNotice('Книга удалена из библиотеки этого устройства.');
-                  })
-                }
-              >
-                <Trash2 size={15} />
-                Удалить «{active.title}»
-              </button>
+              <>
+                <button
+                  className="secondary"
+                  onClick={() => {
+                    setBookMeta({
+                      bookId: active.id,
+                      title: active.title,
+                      author: active.author,
+                      replace: null,
+                    });
+                    setMetaFile(null);
+                    setModal('bookMeta');
+                  }}
+                >
+                  Переименовать «{active.title}»
+                </button>
+                <button
+                  className="delete-book"
+                  onClick={() =>
+                    void run('Удаляю книгу с устройства…', async () => {
+                      await storage.remove(active.id);
+                      booksRef.current = booksRef.current.filter((b) => b.id !== active.id);
+                      setBooks(booksRef.current);
+                      navigate();
+                      setModal(null);
+                      setNotice(
+                        'Книга удалена из библиотеки этого устройства. Серверные разборы сохранятся для повторной загрузки.',
+                      );
+                    })
+                  }
+                >
+                  <Trash2 size={15} />
+                  Удалить «{active.title}»
+                </button>
+              </>
             )}
           </section>
           {error && (
@@ -2119,6 +2488,205 @@ export default function App() {
           </section>
           {busy && (
             <p className="modal-copy" role="status">
+              {busy}
+            </p>
+          )}
+          {error && (
+            <p className="inline-error" role="alert">
+              {error}
+            </p>
+          )}
+        </Modal>
+      )}
+      {modal === 'account' && (
+        <Modal title={account ? 'Аккаунт' : 'Вход'} onClose={() => setModal(null)}>
+          {account ? (
+            <>
+              <p className="modal-copy">
+                Вы вошли как <strong>{account.login}</strong>
+                {account.isAdmin ? ' (администратор)' : ''}. Подписка и бесплатный лимит привязаны к
+                аккаунту; без входа они живут в куках этого браузера.
+              </p>
+              {quota && (
+                <div className="quota-state">
+                  {quota.subscription?.until ? (
+                    <span className="saved-mark">
+                      <Check size={14} />
+                      Подписка до{' '}
+                      {new Date(quota.subscription.until).toLocaleDateString('ru-RU')}
+                    </span>
+                  ) : (
+                    <span>
+                      Новых книг на этой неделе: {quota.used} из {quota.limit}
+                    </span>
+                  )}
+                  {config.subscription?.enabled && !quota.subscription?.until && (
+                    <button className="secondary" disabled={!!busy} onClick={() => void subscribe()}>
+                      <CreditCard size={15} />
+                      Подписка — {config.subscription.price} ₽ / {config.subscription.days} дней
+                    </button>
+                  )}
+                </div>
+              )}
+              <button
+                className="secondary full"
+                onClick={() =>
+                  void run('Выхожу…', async () => {
+                    await api('auth/logout', {});
+                    setAccount(null);
+                    void refreshQuota();
+                    setNotice('Вы вышли. Библиотека этого браузера осталась с вами.');
+                  })
+                }
+              >
+                <LogOut size={15} />
+                Выйти
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="modal-copy">
+                Вход необязателен: всё работает в кукисах. Аккаунт нужен, чтобы переносить подписку
+                между устройствами.
+              </p>
+              <div className="theme-options">
+                <button
+                  className={authTab === 'login' ? 'selected' : ''}
+                  onClick={() => setAuthTab('login')}
+                >
+                  Войти
+                </button>
+                <button
+                  className={authTab === 'register' ? 'selected' : ''}
+                  onClick={() => setAuthTab('register')}
+                >
+                  Создать аккаунт
+                </button>
+              </div>
+              <form
+                className="find-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void run('Проверяю данные…', async () => {
+                    const data = await api(`auth/${authTab}`, {
+                      login: authLogin.trim(),
+                      password: authPassword,
+                    });
+                    setAccount(data.user);
+                    setAuthPassword('');
+                    void refreshQuota();
+                    setModal(null);
+                    setNotice(
+                      data.user.isAdmin
+                        ? `Здравствуйте, ${data.user.login}! Открыт административный доступ.`
+                        : `Здравствуйте, ${data.user.login}!`,
+                    );
+                  });
+                }}
+              >
+                <label className="field">
+                  Логин
+                  <input
+                    value={authLogin}
+                    onChange={(e) => setAuthLogin(e.target.value)}
+                    placeholder="reader"
+                    maxLength={63}
+                    autoComplete="username"
+                    autoFocus
+                  />
+                </label>
+                <label className="field">
+                  Пароль
+                  <input
+                    type="password"
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    placeholder="Минимум 8 символов"
+                    maxLength={200}
+                    autoComplete={authTab === 'login' ? 'current-password' : 'new-password'}
+                  />
+                </label>
+                <button
+                  className="primary full"
+                  disabled={!!busy || !authLogin.trim() || authPassword.length < 8}
+                >
+                  {authTab === 'login' ? 'Войти' : 'Создать аккаунт'}
+                </button>
+              </form>
+              <p className="subtle-note">
+                Пароль хранится только в виде хэша. Мы не просим почту и не восстанавливаем
+                забытые пароли — запишите его.
+              </p>
+            </>
+          )}
+          {error && (
+            <p className="inline-error" role="alert">
+              {error}
+            </p>
+          )}
+        </Modal>
+      )}
+      {modal === 'bookMeta' && bookMeta && (
+        <Modal
+          title={bookMeta.suggestion ? 'Подтвердите книгу' : 'Название и автор'}
+          onClose={() => {
+            setBookMeta(null);
+            setMetaFile(null);
+          }}
+        >
+          {bookMeta.suggestion ? (
+            <p className="modal-copy">
+              Похоже, это «{bookMeta.suggestion.title}»
+              {bookMeta.suggestion.author ? ` — ${bookMeta.suggestion.author}` : ''}. Проверьте и
+              поправьте при необходимости: от этого зависит запись в общей библиотеке.
+              {bookMeta.suggestion.reason ? ` ${bookMeta.suggestion.reason}` : ''}
+            </p>
+          ) : (
+            <p className="modal-copy">
+              Название и автора видно в библиотеке и общей карте. Разборы сохраняются по тексту, так
+              что переименование их не теряет.
+            </p>
+          )}
+          <form
+            className="find-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void saveBookMeta();
+            }}
+          >
+            <label className="field">
+              Название
+              <input
+                value={bookMeta.title}
+                onChange={(e) => setBookMeta({ ...bookMeta, title: e.target.value })}
+                maxLength={300}
+                autoFocus
+              />
+            </label>
+            <label className="field">
+              Автор
+              <input
+                value={bookMeta.author}
+                onChange={(e) => setBookMeta({ ...bookMeta, author: e.target.value })}
+                maxLength={180}
+                placeholder="Имя автора"
+              />
+            </label>
+            {!bookMeta.suggestion && (
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => metaInput.current?.click()}
+              >
+                Загрузить файл заново с этим названием
+              </button>
+            )}
+            <button className="primary full" disabled={!!busy || !bookMeta.title.trim()}>
+              Сохранить
+            </button>
+          </form>
+          {busy && (
+            <p role="status" className="modal-copy">
               {busy}
             </p>
           )}

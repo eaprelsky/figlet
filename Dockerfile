@@ -17,6 +17,7 @@ COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_m
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --chown=node:node package.json ./
 COPY --chown=node:node server ./server
+COPY --chown=node:node src ./src
 RUN mkdir -p /app/data && chown node:node /app/data
 USER node
 EXPOSE 3400

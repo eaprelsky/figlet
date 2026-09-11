@@ -119,5 +119,8 @@ test('API shares originals and analyses, isolates model/text, and serves hits af
     (await fetch(`${base}/api/import/file`, { method: 'POST', body: form })).status,
     200,
   );
-  assert.equal((await (await fetch(`${base}/api/library`)).json()).books.length, 1);
+  // Uploaded files now join the shared catalog: original and parse stay on the server.
+  const catalog = await (await fetch(`${base}/api/library`)).json();
+  assert.equal(catalog.books.length, 2);
+  assert.ok(catalog.books.some((b) => b.title === 'private'));
 });
