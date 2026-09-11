@@ -5,12 +5,13 @@ import multer from 'multer';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AppError } from './network.mjs';
-import { importUrl, makeBook, parseFile, searchSources } from './books.mjs';
+import { importUrl, makeBook, parseFile, searchSources, searchAllSources } from './books.mjs';
 import {
   analyze,
   ask,
   discover,
   identify,
+  verifyText,
   defaultModel,
   models,
   providerName,
@@ -21,11 +22,12 @@ import { createCatalog } from './catalog.mjs';
 import { createAuth } from './auth.mjs';
 import { createBilling } from './billing.mjs';
 import { createIndexer } from './indexer.mjs';
+import { findBookText } from './finder.mjs';
 import { detectLocale, translateError } from './i18n.mjs';
 
 export function createApp({
   cache = createCache(),
-  ai = { analyze, ask, discover, identify },
+  ai = { analyze, ask, discover, identify, verifyText },
   loadBook = importUrl,
   fetchImpl = fetch,
 } = {}) {
@@ -225,7 +227,29 @@ export function createApp({
   app.get('/api/search', async (req, res) => {
     if (typeof req.query.q !== 'string' || !req.query.q.trim() || req.query.q.length > 500)
       throw new AppError('Введите название книги или автора (до 500 символов).');
-    res.json({ results: await searchSources(req.query.q.trim()) });
+    res.json({ results: await searchAllSources(req.query.q.trim()) });
+  });
+  // Agent: web-wide lookup with screening and AI verification of candidates.
+  app.post('/api/find', async (req, res) => {
+    const title = String(req.body?.title || '').trim().slice(0, 300);
+    const author = String(req.body?.author || '').trim().slice(0, 180);
+    if (!title) throw new AppError('Укажите название книги.');
+    const config = personalConfig(req);
+    const result = await findBookText(
+      { title, author },
+      {
+        ai: { ...ai, verifyText: ai.verifyText },
+        key: aiKey(config),
+        cache,
+        budget: withAiBudget,
+        baseUrl: config.baseUrl,
+        provider: config.provider,
+      },
+    );
+    if (result.book) {
+      catalog.register(result.book);
+      res.json({ book: result.book, checked: result.checked, rejected: result.rejected });
+    } else res.json({ candidates: result.candidates, rejected: result.rejected });
   });
   app.post('/api/import/url', async (req, res) => {
     if (typeof req.body.url !== 'string' || req.body.url.length > 4000)
@@ -337,10 +361,15 @@ export function createApp({
     if (!removed) throw new AppError('Книга не найдена в каталоге.', 404);
     res.json({ ok: true, removedWork: removed.removedWork });
   });
+  // Re-run technical-separator cleaning over every stored edition.
+  app.post('/api/admin/reclean', (req, res) => {
+    if (!req.reader.user?.isAdmin) throw new AppError('Только для администратора.', 403);
+    res.json(catalog.recleanEditions());
+  });
   app.delete('/api/admin/works/:id', (req, res) => {
     if (!req.reader.user?.isAdmin) throw new AppError('Только для администратора.', 403);
-    catalog.removeWork(req.params.id);
-    res.json({ ok: true });
+    const editions = catalog.removeWork(req.params.id);
+    res.json({ ok: true, editions });
   });
 
   for (const [route, handler] of Object.entries(ai)) {

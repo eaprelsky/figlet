@@ -268,6 +268,22 @@ export async function identify({ sample, filename, hint }, key, options = {}) {
     reason: string(result.reason, 1000),
   };
 }
+// Agentic verification of a candidate full text before it enters the catalog.
+export async function verifyText({ title, author, sample, stats }, key, options = {}) {
+  const result = await completion({
+    key,
+    model: options.model || defaultModel,
+    baseUrl: options.baseUrl,
+    provider: options.provider,
+    task: `Кандидат на полный текст книги прошёл технический фильтр. Реши, пригоден ли он как текст произведения в библиотеке. Отвергай оглавления без текста, аннотации и рекламные страницы, конспекты и пересказы, фрагменты обрывками, страницы навигации, явно чужие книги. Повреждённые PDF-переносы и примечания редакции — не повод отвергать. JSON: {"verdict":"ok"|"reject","confidence":0.0..1.0,"reason":"коротко, по-русски"}.`,
+    data: { title: string(title, 300), author: string(author, 180), ...stats, sample: string(sample, 12000) },
+  });
+  return {
+    verdict: result.verdict === 'reject' ? 'reject' : 'ok',
+    confidence: Math.max(0, Math.min(1, Number(result.confidence) || 0)),
+    reason: string(result.reason, 500),
+  };
+}
 export async function models(key, baseUrl) {
   if (!key) return [defaultModel];
   const target = baseUrl || BASE;

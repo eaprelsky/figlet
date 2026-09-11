@@ -2708,3 +2708,29 @@ dialog .question-section {
 .delete-book-page {
   flex-shrink: 0;
 }
+
+/* Admin moderation on shared library rows */
+.work-row-wrap {
+  position: relative;
+}
+.work-row-main {
+  display: flex;
+  gap: 17px;
+  text-align: left;
+  padding: 24px 56px 24px 0;
+  width: 100%;
+  border-top: 1px solid var(--line);
+}
+.work-row-main:hover h3 {
+  color: var(--accent);
+}
+.admin-remove {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+}
+.admin-remove:hover {
+  color: #b26268;
+}

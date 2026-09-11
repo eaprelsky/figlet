@@ -49,6 +49,7 @@ async function setup(page: Page) {
       },
     }),
   );
+  await page.route('**/api/find', (r) => r.fulfill({ json: { candidates: [] } }));
   await page.route('**/api/import/url', (r) => r.fulfill({ json: fixture }));
   await page.route('**/api/analyze', (r) => {
     calls.analyze++;
@@ -296,6 +297,6 @@ test('a fresh device opens a shared deep link and sees the public library', asyn
     .locator('.results-section')
     .filter({ has: page.getByRole('heading', { name: 'Общая библиотека' }) });
   await expect(library).toContainText(fixture.title);
-  await library.locator('.work-row').click();
+  await library.locator('.work-row-main').click();
   await expect(page.locator('.reading-title')).toHaveText('Абзац 1.');
 });

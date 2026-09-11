@@ -89,7 +89,9 @@ test('verification agent scores quality and flags junk editions', () => {
     author: 'Автор',
     blocks: Array.from({ length: 40 }, (_, i) => ({
       kind: 'paragraph',
-      text: i % 2 ? String(i) : `${i} ${'слово '.repeat(6)}`,
+      // Pure page numbers no longer reach the agent: cleanBlocks drops them.
+      // This junk survives cleaning but stays digit-heavy and fragmented.
+      text: i % 2 ? `${i} ${i + 1} ${i + 2} п1 ${i}` : `${i} слово слово слово ${i} ${i + 1}`,
     })),
   });
   catalog.register(junk);

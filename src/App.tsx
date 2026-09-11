@@ -76,6 +76,7 @@ type BookMetaDraft = {
 };
 type LibraryBook = {
   id: string;
+  workId?: string;
   title: string;
   author: string;
   sourceUrl: string;
@@ -236,6 +237,7 @@ export default function App() {
   const [aiBaseUrl, setAiBaseUrl] = useState(sessionStorage.getItem('figlet_baseurl') || '');
   const [bookMeta, setBookMeta] = useState<BookMetaDraft | null>(null);
   const [metaFile, setMetaFile] = useState<File | null>(null);
+  const [deleteWork, setDeleteWork] = useState<{ workId: string; title: string } | null>(null);
   const [indexProgress, setIndexProgress] = useState<
     { status: string; done: number; total: number; error?: string } | null
   >(null);
@@ -871,6 +873,18 @@ export default function App() {
           return;
         }
       }
+      // Agent: web-wide search, screening and AI verification of candidates.
+      const found = await api('find', { title: work.title, author: work.author }).catch(() => null);
+      if (found?.book) {
+        await addBook({ ...found.book, authorId: owner?.id });
+        return;
+      }
+      if (found?.candidates?.length) {
+        setSourceQuery(work.title);
+        setSources(found.candidates);
+        setImportTitle(work.title);
+        return;
+      }
       const data = await api(`search?q=${encodeURIComponent(work.title)}`);
       setSourceQuery(work.title);
       setSources(data.results);
@@ -887,19 +901,12 @@ export default function App() {
           ? candidates[0]
           : undefined);
       if (exact) {
-        try {
-          const book = await api('import/url', {
-            url: exact.url,
-            title: work.title,
-            author: work.author,
-          });
-          await addBook({ ...book, authorId: owner?.id });
-        } catch (error) {
-          setImportTitle(work.title);
-          setImportAuthor(work.author);
-          setModal('import');
-          throw error;
-        }
+        const book = await api('import/url', {
+          url: exact.url,
+          title: work.title,
+          author: work.author,
+        });
+        await addBook({ ...book, authorId: owner?.id });
       }
       // No exact text found: stay on the author map and list candidates there.
     });
@@ -1427,26 +1434,38 @@ export default function App() {
                 <p className="subtle-note">{t("Книги из открытых источников. Готовые разборы общие для всех читателей.")}</p>
                 <div className="work-list">
                   {sharedBooks.map((b) => (
-                    <button
-                      className="work-row"
-                      key={b.id}
-                      disabled={!!busy}
-                      onClick={() =>
-                        void run(t("Открываю книгу из общей библиотеки…"), async () => {
-                          await addBook(await api(`library/${b.id}`));
-                        })
-                      }
-                    >
-                      <BookOpen size={20} />
-                      <div>
-                        <div className="work-title">
-                          <h3>{b.title}</h3>
+                    <div className="work-row-wrap" key={b.id}>
+                      <button
+                        className="work-row-main"
+                        disabled={!!busy}
+                        onClick={() =>
+                          void run(t("Открываю книгу из общей библиотеки…"), async () => {
+                            await addBook(await api(`library/${b.id}`));
+                          })
+                        }
+                      >
+                        <BookOpen size={20} />
+                        <div>
+                          <div className="work-title">
+                            <h3>{b.title}</h3>
+                          </div>
+                          <small>{b.author}</small>
+                          <p>{b.paragraphs}{' '}{t("абзацев · Открыть книгу")}</p>
                         </div>
-                        <small>{b.author}</small>
-                        <p>{b.paragraphs}{' '}{t("абзацев · Открыть книгу")}</p>
-                      </div>
-                      <ChevronRight size={18} />
-                    </button>
+                        <ChevronRight size={18} />
+                      </button>
+                      {account?.isAdmin && (
+                        <button
+                          className="icon-button admin-remove"
+                          aria-label={t('Убрать из общей библиотеки')}
+                          title={t('Убрать из общей библиотеки')}
+                          disabled={!!busy}
+                          onClick={() => setDeleteWork({ workId: b.workId || '', title: b.title })}
+                        >
+                          <Trash2 size={17} />
+                        </button>
+                      )}
+                    </div>
                   ))}
                 </div>
               </section>
@@ -2650,6 +2669,45 @@ export default function App() {
                 {t('Удалить с сервера (админ)')}
               </button>
             )}
+          </div>
+          {error && (
+            <p className="inline-error" role="alert">
+              {error}
+            </p>
+          )}
+        </Modal>
+      )}
+      {deleteWork && (
+        <Modal title={t("Убрать из общей библиотеки")} onClose={() => setDeleteWork(null)}>
+          <p className="modal-copy">
+            {t('Удалить «')}
+            {deleteWork.title}
+            {t('» из общей библиотеки на сервере? Все редакции, оригиналы и разборы будут удалены для всех читателей. Локальные копии на устройствах останутся.')}
+          </p>
+          <div className="settings-actions">
+            <button
+              className="delete-book"
+              disabled={!!busy}
+              onClick={() =>
+                void run(t('Удаляю из общей библиотеки…'), async () => {
+                  const data = await del(`admin/works/${deleteWork.workId}`);
+                  for (const editionId of data.editions || []) await storage.remove(editionId);
+                  booksRef.current = booksRef.current.filter(
+                    (b) => !(data.editions || []).includes(b.id),
+                  );
+                  setBooks(booksRef.current);
+                  setDeleteWork(null);
+                  void api('library').then((d) => setSharedBooks(d.books));
+                  setNotice(t('Произведение удалено из общей библиотеки.'));
+                })
+              }
+            >
+              <Trash2 size={15} />
+              {t('Удалить для всех читателей')}
+            </button>
+            <button className="secondary" disabled={!!busy} onClick={() => setDeleteWork(null)}>
+              {t('Отмена')}
+            </button>
           </div>
           {error && (
             <p className="inline-error" role="alert">

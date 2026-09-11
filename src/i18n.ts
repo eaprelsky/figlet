@@ -342,6 +342,14 @@ const en: Record<string, string> = {
   'Книга удалена из библиотеки этого устройства.': 'The book is removed from this device.',
   'Книга удалена с сервера и с этого устройства.':
     'The book is removed from the server and from this device.',
+  // Admin moderation of the shared library.
+  'Убрать из общей библиотеки': 'Remove from the shared library',
+  '» из общей библиотеки на сервере? Все редакции, оригиналы и разборы будут удалены для всех читателей. Локальные копии на устройствах останутся.':
+    '” from the shared library on the server? All editions, originals and analyses will be removed for every reader. Local copies on devices remain.',
+  'Удаляю из общей библиотеки…': 'Removing from the shared library…',
+  'Удалить для всех читателей': 'Delete for all readers',
+  'Отмена': 'Cancel',
+  'Произведение удалено из общей библиотеки.': 'The work is removed from the shared library.',
 };
 
 export function translate(lang: Lang, ru: string): string {

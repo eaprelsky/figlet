@@ -404,6 +404,39 @@ export function createCatalog(db, { filesDir = null } = {}) {
       }
       db.prepare('DELETE FROM books WHERE work_id=?').run(workId);
       db.prepare('DELETE FROM works WHERE id=?').run(workId);
+      return editions.map(({ id }) => id);
+    },
+    // Re-run technical-separator cleaning over stored editions; cleaned texts
+    // land as new editions of the same work, best one wins automatically.
+    recleanEditions() {
+      const rows = db.prepare('SELECT id FROM books').all();
+      let changed = 0;
+      for (const { id } of rows) {
+        const book = loadBook(id);
+        if (!book) continue;
+        const { blocks } = blocksFromBook(book);
+        const rebuilt = makeBook({
+          blocks,
+          title: book.title,
+          author: book.author,
+          sourceUrl: book.sourceUrl,
+          sourceLabel: book.sourceLabel,
+        });
+        if (rebuilt.id === id || db.prepare('SELECT 1 FROM books WHERE id=?').get(rebuilt.id))
+          continue;
+        const workId =
+          db.prepare('SELECT work_id FROM books WHERE id=?').get(id)?.work_id ||
+          this.ensureWork(book.title, book.author);
+        const { quality, notes } = editionQuality(rebuilt);
+        saveBookRow(rebuilt, {
+          work_id: workId,
+          quality,
+          verified: quality >= 3 ? 1 : 0,
+          notes: JSON.stringify(notes),
+        });
+        changed++;
+      }
+      return { editions: rows.length, changed };
     },
     // One edition; the work follows when nothing else references it.
     removeEdition(editionId) {

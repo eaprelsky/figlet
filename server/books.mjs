@@ -10,6 +10,23 @@ const clean = (text) =>
     .replace(/\u00a0/g, ' ')
     .replace(/[ \t]+/g, ' ')
     .trim();
+// Technical separators that carry no meaning: *** / —— / ~~~ runs, lone page
+// numbers, page markers. They pollute both reading and AI context.
+const SEPARATOR_RE = /^[\p{P}\p{S}\s~*=—–-]{1,24}$/u;
+const PAGE_NUMBER_RE = /^[st]?[.\s]?\d{1,4}[st]?[.\s]?$/i;
+export function cleanBlocks(blocks) {
+  let removed = 0;
+  const kept = blocks.filter((block) => {
+    if (block.kind !== 'paragraph') return true;
+    const text = clean(block.text);
+    if (SEPARATOR_RE.test(text) || PAGE_NUMBER_RE.test(text)) {
+      removed++;
+      return false;
+    }
+    return true;
+  });
+  return { blocks: kept, removed };
+}
 const digest = (text) => createHash('sha256').update(text).digest('hex').slice(0, 24);
 export function textBlocks(text) {
   const lines = text.replace(/\r\n?/g, '\n').split(/\n\s*\n/);
@@ -68,6 +85,9 @@ export function makeBook({
   sourceLabel = '',
   warnings = [],
 }) {
+  const { blocks: cleanedBlocks, removed } = cleanBlocks(blocks);
+  if (removed > 5) warnings.push(`Удалены технические разделители разметки: ${removed} абзацев.`);
+  blocks = cleanedBlocks;
   const paragraphs = [];
   const headings = [];
   let chars = 0;
@@ -372,4 +392,61 @@ export async function searchSources(query) {
     source: language === 'ru' ? 'Викитека' : 'Wikisource',
     pageId: row.pageid,
   }));
+}
+
+// Aggregators, shops and socials never host readable public-domain texts.
+const WEB_JUNK = /(^|\.)(wikipedia\.org|amazon\.|ozon\.|wildberries\.|avito\.|livelib\.|goodreads\.|facebook\.com|vk\.com|youtube\.com|instagram\.com|twitter\.com|x\.com|pinterest\.|oz\.by|labirint\.|book24\.|readrate\.|fantlab\.ru|otzovik\.|irecommend\.|dic\.academic|academic\.ru|slovarozhegova|wiktionary\.org|wikiquote\.org|wikibooks\.org)/i;
+export async function searchWeb(query, { language = 'ru', fetchHtml = fetchPublic } = {}) {
+  // Best-effort keyless web search; the agent verifier decides what is usable.
+  const { buffer } = await fetchHtml(
+    `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
+    { maxBytes: 1500000 },
+  );
+  const $ = load(buffer.toString('utf8'));
+  const results = [];
+  $('.result__a').each((_, el) => {
+    const href = $(el).attr('href');
+    const snippet = $(el).closest('.result').find('.result__snippet').text();
+    try {
+      const target = new URL(href, 'https://duckduckgo.com');
+      const real = target.searchParams.get('uddg') || (target.host.endsWith('duckduckgo.com') ? null : target.href);
+      if (!real) return;
+      const url = new URL(real);
+      if (!['http:', 'https:'].includes(url.protocol) || WEB_JUNK.test(url.hostname)) return;
+      results.push({
+        title: clean($(el).text()),
+        snippet: clean(snippet),
+        url: url.href,
+        source: url.hostname.replace(/^www\./, ''),
+      });
+    } catch {
+      /* not a document URL */
+    }
+  });
+  return results
+    .filter((r) => r.title && !/duckduckgo/i.test(r.source))
+    .slice(0, 12);
+}
+
+export async function searchAllSources(query, { fetchHtml } = {}) {
+  const language = /[а-яё]/i.test(query) ? 'ru' : 'en';
+  const [wikisource, web] = await Promise.allSettled([
+    searchSources(query),
+    searchWeb(`${query} ${language === 'ru' ? 'полный текст читать' : 'full text read'}`, {
+      language,
+      fetchHtml,
+    }),
+  ]);
+  const seen = new Set();
+  const merged = [];
+  for (const list of [wikisource, web])
+    if (list.status === 'fulfilled')
+      for (const result of list.value) {
+        if (seen.has(result.url)) continue;
+        seen.add(result.url);
+        merged.push(result);
+      }
+  if (!merged.length && wikisource.status === 'rejected' && web.status === 'rejected')
+    throw new AppError('Поиск временно недоступен. Попробуйте ещё раз или добавьте ссылку.', 502);
+  return merged;
 }
