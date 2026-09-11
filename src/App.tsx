@@ -474,7 +474,8 @@ export default function App() {
   }
   async function subscribe() {
     await run(t("Создаю платёж…"), async () => {
-      const data = await api('billing/checkout');
+      // api() falls back to GET without a body; checkout is POST-only.
+      const data = await api('billing/checkout', {});
       if (!data.confirmationUrl) throw new Error(t('Не удалось создать платёж.'));
       sessionStorage.setItem('figlet_payment', data.paymentId);
       location.href = data.confirmationUrl;
