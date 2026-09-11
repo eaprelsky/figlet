@@ -287,8 +287,8 @@ const en: Record<string, string> = {
     'The PDF has no text layer. Run OCR on the scan or upload EPUB, FB2 or TXT.',
   'Текст объединён из нескольких редакций источника.':
     'Text merged from several editions of the source.',
-  'Текст превышает лимит 2,5 млн символов. Загружена только начальная часть.':
-    'The text exceeds the 2.5M character limit. Only the beginning was loaded.',
+  'Текст превышает лимит 5 млн символов. Загружена только начальная часть.':
+    'The text exceeds the 5M character limit. Only the beginning was loaded.',
   // Strings used in code ternaries and template literals.
   'Важность': 'Importance',
   'из 5 — оценка модели': 'of 5 — model rating',
@@ -331,6 +331,17 @@ const en: Record<string, string> = {
   'Ответ будет учитывать выделенный фрагмент.':
     'The answer will take the selected passage into account.',
   'Вопрос относится к текущему разделу.': 'The question refers to the current section.',
+  // Book page deletion and related copy.
+  'Удалить книгу из библиотеки': 'Delete the book from the library',
+  'Удалить книгу': 'Delete the book',
+  '» с этого устройства? Позиция чтения и локальные вопросы уйдут; разборы на сервере сохранятся.':
+    '” from this device? The reading position and local questions go away; server-side analyses remain.',
+  'Удаляю книгу с сервера…': 'Removing the book from the server…',
+  'Удалить с устройства': 'Delete from this device',
+  'Удалить с сервера (админ)': 'Delete from the server (admin)',
+  'Книга удалена из библиотеки этого устройства.': 'The book is removed from this device.',
+  'Книга удалена с сервера и с этого устройства.':
+    'The book is removed from the server and from this device.',
 };
 
 export function translate(lang: Lang, ru: string): string {

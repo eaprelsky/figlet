@@ -1362,6 +1362,20 @@ dialog::backdrop {
   display: flex;
   gap: 7px;
 }
+/* Roomier vertical rhythm inside Settings so stacked controls don't stick together. */
+.settings-section .theme-options {
+  margin-bottom: 14px;
+}
+.settings-section .theme-options + .theme-options {
+  margin-top: 4px;
+}
+.settings-section .text-button {
+  display: block;
+  margin-top: 14px;
+}
+.settings-section .field {
+  margin-bottom: 14px;
+}
 .theme-options button {
   font-size: 11px;
   padding: 10px 13px;
@@ -1379,6 +1393,7 @@ dialog::backdrop {
   font-size: 10px;
   color: var(--muted);
   line-height: 1.7;
+  margin-top: 12px;
 }
 .checkbox-field input {
   accent-color: var(--accent);
@@ -1390,7 +1405,10 @@ dialog::backdrop {
 }
 .settings-actions {
   display: flex;
+  flex-direction: column;
+  align-items: stretch;
   gap: 10px;
+  margin-top: 14px;
 }
 .delete-book {
   display: flex;
@@ -2687,9 +2705,6 @@ dialog .question-section {
 .provider-details .theme-options {
   margin-top: 10px;
 }
-.settings-actions {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 8px;
+.delete-book-page {
+  flex-shrink: 0;
 }

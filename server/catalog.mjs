@@ -405,6 +405,20 @@ export function createCatalog(db, { filesDir = null } = {}) {
       db.prepare('DELETE FROM books WHERE work_id=?').run(workId);
       db.prepare('DELETE FROM works WHERE id=?').run(workId);
     },
+    // One edition; the work follows when nothing else references it.
+    removeEdition(editionId) {
+      const row = db.prepare('SELECT id, work_id FROM books WHERE id=?').get(editionId);
+      if (!row) return null;
+      db.prepare('DELETE FROM book_analyses WHERE edition_id=?').run(editionId);
+      db.prepare('DELETE FROM edition_files WHERE edition_id=?').run(editionId);
+      db.prepare('DELETE FROM books WHERE id=?').run(editionId);
+      let removedWork = false;
+      if (row.work_id && !db.prepare('SELECT 1 FROM books WHERE work_id=? LIMIT 1').get(row.work_id)) {
+        db.prepare('DELETE FROM works WHERE id=?').run(row.work_id);
+        removedWork = true;
+      }
+      return { removedWork };
+    },
     saveAnalysis(editionId, nodeId, model, value) {
       if (!/^[a-f0-9]{24}$/.test(editionId) || !nodeId || typeof nodeId !== 'string') return;
       db.prepare('INSERT OR REPLACE INTO book_analyses VALUES (?,?,?,?,?)').run(

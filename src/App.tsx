@@ -215,7 +215,15 @@ export default function App() {
   const [route, setRoute] = useState(readRoute);
   const [sidebar, setSidebar] = useState(false);
   const [modal, setModal] = useState<
-    'settings' | 'import' | 'about' | 'question' | 'find' | 'account' | 'bookMeta' | null
+    | 'settings'
+    | 'import'
+    | 'about'
+    | 'question'
+    | 'find'
+    | 'account'
+    | 'bookMeta'
+    | 'deleteBook'
+    | null
   >(null);
   const [account, setAccount] = useState<Account | null>(null);
   const [quota, setQuota] = useState<Quota | null>(null);
@@ -446,6 +454,17 @@ export default function App() {
       .then((r) => r.json())
       .then(setQuota)
       .catch(() => {});
+  }
+  async function del(path: string) {
+    const result = await fetch(`/api/${path}`, {
+      method: 'DELETE',
+      headers: key ? { 'x-deepseek-key': key } : undefined,
+    });
+    if (!result.ok) {
+      const data = await result.json().catch(() => ({}));
+      throw new Error(data.error || t('Не удалось выполнить запрос.'));
+    }
+    return result.json().catch(() => ({}));
   }
   async function subscribe() {
     await run(t("Создаю платёж…"), async () => {
@@ -1183,7 +1202,7 @@ export default function App() {
             <article className="reading-area author-page">
               <div className="semantic-location">
                 <span>{t("Автор")}</span>
-                <span>{activeAuthor.works.length}{t("произведений на карте")}</span>
+                <span>{activeAuthor.works.length}{' '}{t("произведений на карте")}</span>
               </div>
               <h1 className="reading-title">{activeAuthor.name}</h1>
               <p className="author-intro">{activeAuthor.intro}</p>
@@ -1315,7 +1334,7 @@ export default function App() {
                       </span>
                       <div>
                         <strong>{a.name}</strong>
-                        <small>{a.works.length}{t("произведений")}</small>
+                        <small>{a.works.length}{' '}{t("произведений")}</small>
                       </div>
                       <ChevronRight size={16} />
                     </button>
@@ -1346,7 +1365,7 @@ export default function App() {
                               ? t('Общая картина')
                               : b.nodes[b.currentNode]?.title}
                           </span>
-                          <small>{Object.keys(b.analyses).length}{t("разборов сохранено")}</small>
+                          <small>{Object.keys(b.analyses).length}{' '}{t("разборов сохранено")}</small>
                         </span>
                       </button>
                     ))}
@@ -1357,7 +1376,7 @@ export default function App() {
               <section className="results-section">
                 <div className="section-heading">
                   <h2>{t("Общая библиотека")}</h2>
-                  <span>{sharedBooks.length}{t("книг")}</span>
+                  <span>{sharedBooks.length}{' '}{t("книг")}</span>
                 </div>
                 <p className="subtle-note">{t("Книги из открытых источников. Готовые разборы общие для всех читателей.")}</p>
                 <div className="work-list">
@@ -1378,7 +1397,7 @@ export default function App() {
                           <h3>{b.title}</h3>
                         </div>
                         <small>{b.author}</small>
-                        <p>{b.paragraphs}{t("абзацев · Открыть книгу")}</p>
+                        <p>{b.paragraphs}{' '}{t("абзацев · Открыть книгу")}</p>
                       </div>
                       <ChevronRight size={18} />
                     </button>
@@ -1410,7 +1429,7 @@ export default function App() {
                         </div>
                         <small>{work.author}</small>
                         <p>{work.reason}</p>
-                        <span className="text-action">{t("Найти и открыть текст")}<ChevronRight size={14} />
+                        <span className="text-action">{t("Найти и открыть текст")}{' '}<ChevronRight size={14} />
                         </span>
                       </div>
                     </button>
@@ -1422,7 +1441,7 @@ export default function App() {
               <section className="results-section">
                 <div className="section-heading">
                   <h2>{t("Тексты по запросу «")}{sourceQuery}»</h2>
-                  <span>{sources.length}{t("найдено")}</span>
+                  <span>{sources.length}{' '}{t("найдено")}</span>
                 </div>
                 {sources.length ? (
                   <div className="source-list">
@@ -1501,7 +1520,7 @@ export default function App() {
                         <BookOpen size={21} />
                       </span>
                       <span className="catalog-theme">{b.theme}</span>
-                      <span className="catalog-open">{t("Карта автора")}<ChevronRight size={13} />
+                      <span className="catalog-open">{t("Карта автора")}{' '}<ChevronRight size={13} />
                       </span>
                     </button>
                   ))}
@@ -1566,7 +1585,7 @@ export default function App() {
             <article className="reading-area">
               <div className="semantic-location">
                 <span>{levelLabel}</span>
-                <span>{t("Страница")}{pageIndex + 1}{t("из")}{pageCount}{t("на этом уровне")}</span>
+                <span>{t("Страница")}{' '}{pageIndex + 1}{' '}{t("из")}{' '}{pageCount}{' '}{t("на этом уровне")}</span>
               </div>
               <div className="book-context">
                 {active.author || t('Ваша книга')}
@@ -1580,11 +1599,11 @@ export default function App() {
               </h1>
               <div className="reading-meta">
                 <span>
-                  {readingMinutes(active.paragraphs.slice(node.start, node.end))}{t("мин оригинала")}</span>
-                <span>{node.end - node.start}{t("абзацев")}</span>
+                  {readingMinutes(active.paragraphs.slice(node.start, node.end))}{' '}{t("мин оригинала")}</span>
+                <span>{node.end - node.start}{' '}{t("абзацев")}</span>
                 {indexProgress?.status === 'running' && (
                   <span className="index-progress">
-                    <LoaderCircle className="spin" size={13} />{t("Карта книги:")}{indexProgress.done}
+                    <LoaderCircle className="spin" size={13} />{t("Карта книги:")}{' '}{indexProgress.done}
                     {indexProgress.total ? ` из ${indexProgress.total}` : ''}
                   </span>
                 )}
@@ -1641,6 +1660,14 @@ export default function App() {
                 >
                   <MessageCircle size={15} />
                   <span>{t("Спросить")}</span>
+                </button>
+                <button
+                  className="icon-button delete-book-page"
+                  aria-label={t('Удалить книгу из библиотеки')}
+                  title={t('Удалить книгу из библиотеки')}
+                  onClick={() => setModal('deleteBook')}
+                >
+                  <Trash2 size={17} />
                 </button>
               </div>
               {view === 'summary' ? (
@@ -1871,17 +1898,6 @@ export default function App() {
                   )}
                 </section>
               )}
-              <div className="source-credit">
-                <FileText size={14} />
-                <span>{t("Источник:")}{' '}
-                  {safeLink(active.sourceUrl) ? (
-                    <a href={safeLink(active.sourceUrl)} target="_blank" rel="noreferrer">
-                      {active.sourceLabel || t('Открыть оригинал')}
-                    </a>
-                  ) : (
-                    active.sourceLabel || t('загруженный файл')
-                  )}{t(". Оценки и интерпретации AI могут быть неточны.")}</span>
-              </div>
             </article>
             <nav className="semantic-dock" aria-label={t("Масштаб и страницы книги")}>
               <button
@@ -2053,7 +2069,7 @@ export default function App() {
                 onChange={(e) => setUrl(e.target.value)}
               />
             </label>
-            <label className="field">{t("Название")}<span>{t("необязательно")}</span>
+            <label className="field">{t("Название")}{' '}<span>{t("необязательно")}</span>
               <input
                 value={importTitle}
                 onChange={(e) => setImportTitle(e.target.value)}
@@ -2061,7 +2077,7 @@ export default function App() {
                 maxLength={300}
               />
             </label>
-            <label className="field">{t("Автор")}<span>{t("необязательно")}</span>
+            <label className="field">{t("Автор")}{' '}<span>{t("необязательно")}</span>
               <input
                 value={importAuthor || activeAuthor?.name || ''}
                 onChange={(e) => setImportAuthor(e.target.value)}
@@ -2147,10 +2163,10 @@ export default function App() {
               <div className="quota-state">
                 {quota.subscription?.until ? (
                   <span className="saved-mark">
-                    <Check size={14} />{t("Подписка до")}{new Date(quota.subscription.until).toLocaleDateString(lang === 'en' ? 'en-GB' : 'ru-RU')}
+                    <Check size={14} />{t("Подписка до")}{' '}{new Date(quota.subscription.until).toLocaleDateString(lang === 'en' ? 'en-GB' : 'ru-RU')}
                   </span>
                 ) : (
-                  <span>{t("Новых книг на этой неделе:")}{quota.used}{t("из")}{quota.limit}
+                  <span>{t("Новых книг на этой неделе:")}{' '}{quota.used}{' '}{t("из")}{' '}{quota.limit}
                   </span>
                 )}
                 {config.subscription?.enabled && !quota.subscription?.until && (
@@ -2159,7 +2175,7 @@ export default function App() {
                     disabled={!!busy}
                     onClick={() => void subscribe()}
                   >
-                    <CreditCard size={15} />{t("Подписка —")}{config.subscription.price} ₽ / {config.subscription.days}{t("дней")}</button>
+                    <CreditCard size={15} />{t("Подписка —")}{' '}{config.subscription.price} ₽ / {config.subscription.days}{' '}{t("дней")}</button>
                 )}
               </div>
             )}
@@ -2239,7 +2255,7 @@ export default function App() {
           <section className="settings-section">
             <h3>{t("Ваша библиотека")}</h3>
             <p className="modal-copy">
-              {books.length}{t("книг на этом устройстве. Общие разборы хранятся на сервере; позиция чтения, личные файлы и вопросы — в браузере. Экспортируйте библиотеку для переноса.")}</p>
+              {books.length}{' '}{t("книг на этом устройстве. Общие разборы хранятся на сервере; позиция чтения, личные файлы и вопросы — в браузере. Экспортируйте библиотеку для переноса.")}</p>
             <div className="settings-actions">
               <button
                 className="secondary"
@@ -2385,7 +2401,7 @@ export default function App() {
         <Modal title={account ? t('Аккаунт') : t('Вход')} onClose={() => setModal(null)}>
           {account ? (
             <>
-              <p className="modal-copy">{t("Вы вошли как")}<strong>{account.login}</strong>
+              <p className="modal-copy">{t("Вы вошли как")}{' '}<strong>{account.login}</strong>
                 {account.isAdmin ? ' (администратор)' : ''}{t(". Подписка и бесплатный лимит привязаны к аккаунту; без входа они живут в куках этого браузера.")}</p>
               {quota && (
                 <div className="quota-state">
@@ -2395,12 +2411,12 @@ export default function App() {
                       {new Date(quota.subscription.until).toLocaleDateString(lang === 'en' ? 'en-GB' : 'ru-RU')}
                     </span>
                   ) : (
-                    <span>{t("Новых книг на этой неделе:")}{quota.used}{t("из")}{quota.limit}
+                    <span>{t("Новых книг на этой неделе:")}{' '}{quota.used}{' '}{t("из")}{' '}{quota.limit}
                     </span>
                   )}
                   {config.subscription?.enabled && !quota.subscription?.until && (
                     <button className="secondary" disabled={!!busy} onClick={() => void subscribe()}>
-                      <CreditCard size={15} />{t("Подписка —")}{config.subscription.price} ₽ / {config.subscription.days}{t("дней")}</button>
+                      <CreditCard size={15} />{t("Подписка —")}{' '}{config.subscription.price} ₽ / {config.subscription.days}{' '}{t("дней")}</button>
                   )}
                 </div>
               )}
@@ -2543,19 +2559,72 @@ export default function App() {
           )}
         </Modal>
       )}
+      {modal === 'deleteBook' && active && (
+        <Modal title={t("Удалить книгу")} onClose={() => setModal(null)}>
+          <p className="modal-copy">
+            {t('Удалить «')}
+            {active.title}
+            {t('» с этого устройства? Позиция чтения и локальные вопросы уйдут; разборы на сервере сохранятся.')}
+          </p>
+          <div className="settings-actions">
+            <button
+              className="delete-book"
+              disabled={!!busy}
+              onClick={() =>
+                void run(t('Удаляю книгу с устройства…'), async () => {
+                  await storage.remove(active.id);
+                  booksRef.current = booksRef.current.filter((b) => b.id !== active.id);
+                  setBooks(booksRef.current);
+                  setModal(null);
+                  navigate();
+                  setNotice(t('Книга удалена из библиотеки этого устройства.'));
+                })
+              }
+            >
+              <Trash2 size={15} />
+              {t('Удалить с устройства')}
+            </button>
+            {account?.isAdmin && (
+              <button
+                className="delete-book"
+                disabled={!!busy}
+                onClick={() =>
+                  void run(t('Удаляю книгу с сервера…'), async () => {
+                    await del(`admin/editions/${active.id}`);
+                    await storage.remove(active.id);
+                    booksRef.current = booksRef.current.filter((b) => b.id !== active.id);
+                    setBooks(booksRef.current);
+                    setModal(null);
+                    navigate();
+                    setNotice(t('Книга удалена с сервера и с этого устройства.'));
+                  })
+                }
+              >
+                <Trash2 size={15} />
+                {t('Удалить с сервера (админ)')}
+              </button>
+            )}
+          </div>
+          {error && (
+            <p className="inline-error" role="alert">
+              {error}
+            </p>
+          )}
+        </Modal>
+      )}
       {modal === 'about' && (
         <Modal title={t("Читайте в своём масштабе")} onClose={() => setModal(null)}>
           <div className="about-content">
             <p>{t("Figlet помогает найти в книге то, что важно именно вам.")}</p>
             <ol>
               <li>
-                <strong>{t("Выберите направление.")}</strong>{t("Спросите об авторе или найдите конкретную книгу.")}</li>
+                <strong>{t("Выберите направление.")}</strong>{' '}{t("Спросите об авторе или найдите конкретную книгу.")}</li>
               <li>
-                <strong>{t("Посмотрите на общую картину.")}</strong>{t("Узнайте главную мысль и роль каждого раздела.")}</li>
+                <strong>{t("Посмотрите на общую картину.")}</strong>{' '}{t("Узнайте главную мысль и роль каждого раздела.")}</li>
               <li>
-                <strong>{t("Углубляйтесь.")}</strong>{t("Открывайте интересные разделы, пока не дойдёте до отдельного абзаца.")}</li>
+                <strong>{t("Углубляйтесь.")}</strong>{' '}{t("Открывайте интересные разделы, пока не дойдёте до отдельного абзаца.")}</li>
               <li>
-                <strong>{t("Сверяйтесь с текстом.")}</strong>{t("Переключитесь на оригинал, выделите фразу и задайте вопрос.")}</li>
+                <strong>{t("Сверяйтесь с текстом.")}</strong>{' '}{t("Переключитесь на оригинал, выделите фразу и задайте вопрос.")}</li>
             </ol>
             <p>{t("Разбор появляется при первом открытии уровня и сохраняется. Путь сверху и кнопки снизу помогают двигаться в любую сторону.")}</p>
             <p className="subtle-note">{t("Важность — субъективная оценка модели. Проверяйте спорные выводы по оригиналу. Общие книги и разборы хранятся на сервере. Браузер сохраняет копии для чтения офлайн, личные файлы, вопросы и вашу позицию.")}</p>

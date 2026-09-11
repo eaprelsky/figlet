@@ -3,7 +3,8 @@ import { load } from 'cheerio';
 import { unzipSync } from 'fflate';
 import { AppError, fetchPublic } from './network.mjs';
 
-const MAX_CHARACTERS = 2500000;
+// Large novels (War and Peace ~3.2M, the Synodal Bible ~4.1M) must fit whole.
+const MAX_CHARACTERS = 5000000;
 const clean = (text) =>
   text
     .replace(/\u00a0/g, ' ')
@@ -72,7 +73,7 @@ export function makeBook({
   let chars = 0;
   for (const block of blocks) {
     if (chars + block.text.length > MAX_CHARACTERS) {
-      warnings.push('Текст превышает лимит 2,5 млн символов. Загружена только начальная часть.');
+      warnings.push('Текст превышает лимит 5 млн символов. Загружена только начальная часть.');
       break;
     }
     chars += block.text.length;

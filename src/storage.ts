@@ -50,7 +50,7 @@ export function validBook(value: unknown): value is Book {
     typeof b.author !== 'string' ||
     !Array.isArray(b.paragraphs) ||
     !b.paragraphs.every((p) => typeof p === 'string') ||
-    b.paragraphs.join('').length > 2500000 ||
+    b.paragraphs.join('').length > 5000000 ||
     !b.nodes?.root ||
     !b.analyses ||
     !b.answers ||

@@ -330,6 +330,13 @@ export function createApp({
     if (!req.reader.user?.isAdmin) throw new AppError('Только для администратора.', 403);
     res.json(catalog.verify(req.params.id));
   });
+  // Moderation from the book page: remove one edition (and its work when last).
+  app.delete('/api/admin/editions/:id', (req, res) => {
+    if (!req.reader.user?.isAdmin) throw new AppError('Только для администратора.', 403);
+    const removed = catalog.removeEdition(req.params.id);
+    if (!removed) throw new AppError('Книга не найдена в каталоге.', 404);
+    res.json({ ok: true, removedWork: removed.removedWork });
+  });
   app.delete('/api/admin/works/:id', (req, res) => {
     if (!req.reader.user?.isAdmin) throw new AppError('Только для администратора.', 403);
     catalog.removeWork(req.params.id);
