@@ -5,6 +5,7 @@ export default defineConfig({
   use: {
     baseURL: 'http://127.0.0.1:3402',
     headless: true,
+    locale: 'ru-RU',
     viewport: { width: 1280, height: 900 },
     reducedMotion: 'reduce',
     serviceWorkers: 'block',

@@ -14,7 +14,7 @@ function parseJson(text) {
   return JSON.parse(raw.slice(start, end + 1));
 }
 
-export async function completion({ key, model = defaultModel, task, data, baseUrl, provider }) {
+export async function completion({ key, model = defaultModel, task, data, baseUrl, provider, lang }) {
   if (!key) throw new AppError('Для разбора нужен ключ. Добавьте его в настройках.', 401);
   const custom = Boolean(baseUrl);
   if (custom) {
@@ -31,6 +31,11 @@ export async function completion({ key, model = defaultModel, task, data, baseUr
     throw new AppError('Укажите корректный идентификатор модели.');
 
   const anthropic = provider === 'anthropic';
+  // The base persona is Russian; an English reader gets English output fields.
+  const language =
+    lang === 'en'
+      ? ' Отвечай по-английски: все текстовые поля ответа (обзоры, идеи, пояснения, саммари, ответы) должны быть на английском языке.'
+      : '';
   const target = custom
     ? anthropic
       ? `${baseUrl}/v1/messages`
@@ -50,7 +55,7 @@ export async function completion({ key, model = defaultModel, task, data, baseUr
         model,
         max_tokens: 6000,
         temperature: 0.35,
-        system: `${SYSTEM}\n\n${task}\n\nОтвечай одним JSON-объектом без пояснений вокруг.`,
+        system: `${SYSTEM}${language}\n\n${task}\n\nОтвечай одним JSON-объектом без пояснений вокруг.`,
         messages: [{ role: 'user', content: user }],
       }
     : {
@@ -60,7 +65,7 @@ export async function completion({ key, model = defaultModel, task, data, baseUr
         max_tokens: 6000,
         ...(custom ? {} : { response_format: { type: 'json_object' } }),
         messages: [
-          { role: 'system', content: `${SYSTEM}\n\n${task}` },
+          { role: 'system', content: `${SYSTEM}${language}\n\n${task}` },
           { role: 'user', content: user },
         ],
       };
@@ -149,6 +154,7 @@ export async function analyze(body, key, options = {}) {
     model: body.model,
     baseUrl: options.baseUrl,
     provider: options.provider,
+    lang: options.lang,
     task: `Разбери переданный уровень книги. JSON: {"summary":"содержательный обзор 2–3 абзаца", "ideas":["3–5 ключевых идей"], "importance":1..5, "why":"почему этот раздел важен и какой вклад в аргумент", "skip":"что можно пропустить и кому стоит читать внимательно", "children":[{"id":"точный id из children", "title":"смысловое заголовок до 100 символов", "summary":"1–2 предложения о содержании", "importance":1..5}]}. У существующих глав сохраняй исходное название; у автоматически нарезанных фрагментов придумай смысловое. children содержит только переданные id, каждый ровно один раз. Если coverage=sampled, обзор относится к выборке, не утверждай, что изучил весь текст. Не цитируй длинные пассажи.`,
     data: {
       title: string(body.title, 300),
@@ -203,6 +209,7 @@ export async function ask(body, key, options = {}) {
     model: body.model,
     baseUrl: options.baseUrl,
     provider: options.provider,
+    lang: options.lang,
     task: `Ответь на вопрос по переданному тексту, удели внимание selectedQuote, если оно задано. JSON: {"answer":"ответ 2–5 абзацев", "citations":[индексы подтверждающих абзацев из paragraphs]}. Используй ссылки вида [¶N], где N=index+1. Цитаты воспроизводи точно и кратко. Если ответа в тексте нет, прямо скажи об этом; внешние знания явно отделяй. Для sampled учитывай, что часть раздела не передана.`,
     data: {
       title: string(body.title, 300),
@@ -222,6 +229,7 @@ export async function discover(body, key, options = {}) {
     model: body.model,
     baseUrl: options.baseUrl,
     provider: options.provider,
+    lang: options.lang,
     task: `Читатель хочет сориентироваться в авторе или теме. Тексты ещё НЕ загружены: это ориентировка по твоим знаниям. JSON: {"title":"название маршрута", "intro":"коротко: что внёс автор и с чего начать", "works":[{"title":"точное общеупотребительное название произведения", "author":"автор", "reason":"что даст чтение, какой вклад и что вторично", "importance":1..5, "query":"короткий поисковый запрос по названию и автору"}]}. Предложи 3–6 реальных произведений, расположи в порядке полезности для вопроса читателя. Не выдавай себя за поисковую систему, не выдумывай URL, доступность и наличие полного текста. Если не уверен, обозначь неопределённость.`,
     data: { query },
   });

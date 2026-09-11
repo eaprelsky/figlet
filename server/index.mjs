@@ -21,6 +21,7 @@ import { createCatalog } from './catalog.mjs';
 import { createAuth } from './auth.mjs';
 import { createBilling } from './billing.mjs';
 import { createIndexer } from './indexer.mjs';
+import { detectLocale, translateError } from './i18n.mjs';
 
 export function createApp({
   cache = createCache(),
@@ -82,12 +83,15 @@ export function createApp({
 
   app.use('/api', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
+    req.lang = detectLocale(req);
     if (
       req.method === 'POST' &&
       (req.headers['sec-fetch-site'] === 'cross-site' ||
         (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host))
     )
-      return res.status(403).json({ error: 'Запрос разрешён только из Figlet.' });
+      return res
+        .status(403)
+        .json({ error: translateError('Запрос разрешён только из Figlet.', req.lang) });
     req.reader = auth.reader(req, res);
     next();
   });
@@ -98,7 +102,9 @@ export function createApp({
       limit: 100,
       standardHeaders: 'draft-8',
       legacyHeaders: false,
-      message: { error: 'Слишком много запросов. Попробуйте через несколько минут.' },
+      message: (req) => ({
+        error: translateError('Слишком много запросов. Попробуйте через несколько минут.', req.lang),
+      }),
     }),
   );
   app.use(express.json({ limit: '8mb' }));
@@ -107,16 +113,21 @@ export function createApp({
     limit: 40,
     standardHeaders: 'draft-8',
     legacyHeaders: false,
-    message: {
-      error: 'Лимит — 40 новых разборов и вопросов в час. Сохранённые доступны без ограничений.',
-    },
+    message: (req) => ({
+      error: translateError(
+        'Лимит — 40 новых разборов и вопросов в час. Сохранённые доступны без ограничений.',
+        req.lang,
+      ),
+    }),
   });
   const authLimit = rateLimit({
     windowMs: 15 * 60000,
     limit: 20,
     standardHeaders: 'draft-8',
     legacyHeaders: false,
-    message: { error: 'Слишком много попыток входа. Подождите немного.' },
+    message: (req) => ({
+      error: translateError('Слишком много попыток входа. Подождите немного.', req.lang),
+    }),
   });
   const upload = multer({
     storage: multer.memoryStorage(),
@@ -364,7 +375,11 @@ export function createApp({
           }
         }
         const result = await withAiBudget(() =>
-          handler(req.body, aiKey(config), { baseUrl: config.baseUrl, provider: config.provider }),
+          handler(req.body, aiKey(config), {
+            baseUrl: config.baseUrl,
+            provider: config.provider,
+            lang: req.body?.lang === 'en' ? 'en' : 'ru',
+          }),
         );
         if (chargeBook) billing.chargeBook(req.reader.id, bookId);
         if (route === 'analyze' && bookId && nodeId)
@@ -381,12 +396,15 @@ export function createApp({
               section: req.body.section,
               paragraphs: req.body.paragraphs,
               children: req.body.children,
+              // Non-default language produces its own cache entries; ru keeps legacy keys.
+              ...(req.body?.lang === 'en' ? { lang: 'en' } : {}),
             }
           : {
               model,
               query: String(req.body.query || '')
                 .trim()
                 .toLowerCase(),
+              ...(req.body?.lang === 'en' ? { lang: 'en' } : {}),
             };
       const result = await cache.remember(
         route,
@@ -396,7 +414,9 @@ export function createApp({
       res.set('X-Figlet-Cache', result.cache).json(result.value);
     });
   }
-  app.use('/api', (_req, res) => res.status(404).json({ error: 'Такого API-метода нет.' }));
+  app.use('/api', (_req, res) =>
+    res.status(404).json({ error: translateError('Такого API-метода нет.', _req.lang) }),
+  );
   const dist = fileURLToPath(new URL('../dist', import.meta.url));
   app.use(express.static(dist, { index: false, maxAge: '1h' }));
   app.get('/{*path}', (_req, res) => res.sendFile(path.join(dist, 'index.html')));
@@ -409,10 +429,13 @@ export function createApp({
       console.error('Request failed:', error.name, error.code || 'unclassified');
     res.status(oversized ? 413 : known ? error.status : 500).json({
       error: oversized
-        ? 'Файл слишком большой. Максимум — 10 МБ.'
+        ? translateError('Файл слишком большой. Максимум — 10 МБ.', _req.lang)
         : known
-          ? error.message
-          : 'Не удалось обработать запрос. Попробуйте другой файл, ссылку или повторите позже.',
+          ? translateError(error.message, _req.lang)
+          : translateError(
+              'Не удалось обработать запрос. Попробуйте другой файл, ссылку или повторите позже.',
+              _req.lang,
+            ),
       ...(known && error.code ? { code: error.code } : {}),
     });
   });
