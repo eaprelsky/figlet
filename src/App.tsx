@@ -338,21 +338,25 @@ export default function App() {
   ) {
     let level = requestedLevel || 0;
     let anchor = requestedAnchor || 0;
+    let target = nodeId;
     if (bookId)
       updateBook(bookId, (b) => {
-        level = requestedLevel ?? Math.max(0, ancestors(b, nodeId).length - 1);
+        // Old links may point at nodes collapsed by normalization; fall back to root.
+        const alias = resolveNodeId(b, nodeId);
+        target = b.nodes[alias] ? alias : 'root';
+        level = requestedLevel ?? Math.max(0, ancestors(b, target).length - 1);
         const expanded = frontierAt(b, level).book;
-        anchor = requestedAnchor ?? expanded.nodes[nodeId].start;
+        anchor = requestedAnchor ?? (expanded.nodes[target] || expanded.nodes.root).start;
         return {
-          ...expandNode(expanded, nodeId),
-          currentNode: nodeId,
+          ...expandNode(expanded, target),
+          currentNode: target,
           currentLevel: level,
           currentAnchor: anchor,
           updatedAt: Date.now(),
         };
       });
     location.hash = bookId
-      ? `/book/${encodeURIComponent(bookId)}/${encodeURIComponent(nodeId)}?level=${level}&at=${anchor}`
+      ? `/book/${encodeURIComponent(bookId)}/${encodeURIComponent(target)}?level=${level}&at=${anchor}`
       : '/';
     setSidebar(false);
     setQuote('');
@@ -843,11 +847,13 @@ export default function App() {
       setAuthors((current) => current.map((a) => (a.id === owner.id ? updated : a)));
       void storage.saveAuthor(updated).catch(() => {});
     }
-    const existing = booksRef.current.find(
-      (b) =>
-        b.title.toLowerCase() === work.title.toLowerCase() &&
-        b.author.toLowerCase() === work.author.toLowerCase(),
-    );
+    // Cached copies often carry a translated or annotated title and a fuller author
+    // name; match loosely so an offline reader keeps their saved book.
+    const key = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+    const byTitle = booksRef.current.filter((b) => key(b.title).includes(key(work.title)));
+    const existing =
+      byTitle.find((b) => key(b.author).includes(key(work.author)) || key(work.author).includes(key(b.author))) ||
+      (byTitle.length === 1 ? byTitle[0] : undefined);
     if (existing) {
       navigate(existing.id, 'root', 0);
       return;
@@ -894,9 +900,8 @@ export default function App() {
           setModal('import');
           throw error;
         }
-      } else {
-        navigate();
       }
+      // No exact text found: stay on the author map and list candidates there.
     });
   }
   async function importFile(file?: File) {
@@ -1236,6 +1241,47 @@ export default function App() {
                   </button>
                 ))}
               </section>
+              {sources && (
+                <section className="results-section">
+                  <div className="section-heading">
+                    <h2>{t("Тексты по запросу «")}{sourceQuery}»</h2>
+                    <span>{sources.length}{' '}{t("найдено")}</span>
+                  </div>
+                  {sources.length ? (
+                    <div className="source-list">
+                      {sources.map((s) => (
+                        <button
+                          className="source-row"
+                          disabled={!!busy}
+                          key={s.url}
+                          onClick={() =>
+                            void run(t("Загружаю текст книги…"), async () =>
+                              addBook(await api('import/url', { url: s.url, title: s.title })),
+                            )
+                          }
+                        >
+                          <FileText size={19} />
+                          <div>
+                            <h3>{s.title}</h3>
+                            <p>{s.snippet}</p>
+                            <small>{s.source}</small>
+                          </div>
+                          <ArrowDown size={18} />
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="not-found">
+                      <h3>{t("Открытый текст не найден")}</h3>
+                      <p>
+                        {t("Попробуйте точное название. Если у вас есть книга, добавьте ссылку на текст или файл.")}
+                      </p>
+                      <button className="secondary" onClick={() => setModal('import')}>
+                        <Plus size={16} />{t("Добавить книгу")}</button>
+                    </div>
+                  )}
+                </section>
+              )}
               <div className="author-actions">
                 <button
                   className="secondary"
