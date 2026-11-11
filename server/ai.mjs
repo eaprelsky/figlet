@@ -138,6 +138,14 @@ export function selectContext(paragraphs, max = 140000) {
 const string = (value, limit = 10000) => (typeof value === 'string' ? value.slice(0, limit) : '');
 const score = (value) => Math.max(1, Math.min(5, Math.round(Number(value) || 3)));
 
+// One response is only asked to summarize a bounded number of sections; wider
+// levels fan out into batches so the model never has to fit every chapter
+// into a single answer (the old all-or-nothing contract dropped whole levels).
+const CHILDREN_PER_CALL = 25;
+const LEVEL_TASK = `Разбери переданный уровень книги. JSON: {"summary":"содержательный обзор 2–3 абзаца", "ideas":["3–5 ключевых идей"], "importance":1..5, "why":"почему этот раздел важен и какой вклад в аргумент", "skip":"что можно пропустить и кому стоит читать внимательно", "children":[{"id":"точный id из children", "title":"смысловое заголовок до 100 символов", "summary":"1–2 предложения о содержании", "importance":1..5}]}. У существующих глав сохраняй исходное название; у автоматически нарезанных фрагментов придумай смысловое. children содержит только переданные id, каждый ровно один раз. Если coverage=sampled, обзор относится к выборке, не утверждай, что изучил весь текст. Не цитируй длинные пассажи.`;
+const LEVEL_TASK_WIDE = `Разбери переданный уровень книги. children переданы только как структура оглавления — саммари разделов для них пишутся отдельно, не возвращай их. JSON: {"summary":"содержательный обзор 2–3 абзаца", "ideas":["3–5 ключевых идей"], "importance":1..5, "why":"почему этот раздел важен и какой вклад в аргумент", "skip":"что можно пропустить и кому стоит читать внимательно"}. Если coverage=sampled, обзор относится к выборке, не утверждай, что изучил весь текст. Не цитируй длинные пассажи.`;
+const CHILDREN_TASK = `Для каждого элемента children напиши саммари по его preview и положению в книге. JSON: {"children":[{"id":"точный id из children", "title":"смысловое заголовок до 100 символов", "summary":"1–2 предложения о содержании", "importance":1..5}]}. Верни все переданные id, каждый ровно один раз. У существующих глав сохраняй исходное название; у автоматически нарезанных фрагментов придумай смысловое.`;
+
 export async function analyze(body, key, options = {}) {
   const context = selectContext(body.paragraphs);
   const children = Array.isArray(body.children)
@@ -149,30 +157,61 @@ export async function analyze(body, key, options = {}) {
         preview: string(c.preview, 1600),
       }))
     : [];
-  const result = await completion({
-    key,
-    model: body.model,
-    baseUrl: options.baseUrl,
-    provider: options.provider,
-    lang: options.lang,
-    task: `Разбери переданный уровень книги. JSON: {"summary":"содержательный обзор 2–3 абзаца", "ideas":["3–5 ключевых идей"], "importance":1..5, "why":"почему этот раздел важен и какой вклад в аргумент", "skip":"что можно пропустить и кому стоит читать внимательно", "children":[{"id":"точный id из children", "title":"смысловое заголовок до 100 символов", "summary":"1–2 предложения о содержании", "importance":1..5}]}. У существующих глав сохраняй исходное название; у автоматически нарезанных фрагментов придумай смысловое. children содержит только переданные id, каждый ровно один раз. Если coverage=sampled, обзор относится к выборке, не утверждай, что изучил весь текст. Не цитируй длинные пассажи.`,
-    data: {
-      title: string(body.title, 300),
-      author: string(body.author, 180),
-      section: string(body.section, 300),
-      ...context,
-      children,
-    },
-  });
+  const call = (task, data) =>
+    completion({
+      key,
+      model: body.model,
+      baseUrl: options.baseUrl,
+      provider: options.provider,
+      lang: options.lang,
+      task,
+      data,
+    });
+  const meta = {
+    title: string(body.title, 300),
+    author: string(body.author, 180),
+    section: string(body.section, 300),
+  };
+  const wide = children.length > CHILDREN_PER_CALL;
+  const result = await call(
+    wide ? LEVEL_TASK_WIDE : LEVEL_TASK,
+    wide
+      ? { ...meta, ...context, children: children.map(({ id, title }) => ({ id, title })) }
+      : { ...meta, ...context, children },
+  );
   if (!string(result.summary))
     throw new AppError('В ответе модели отсутствует разбор. Повторите запрос.', 502);
-  if (
-    children.some(
-      (c) =>
-        !Array.isArray(result.children) ||
-        !result.children.some((r) => r.id === c.id && string(r.summary).trim()),
-    )
-  )
+
+  const entries = new Map();
+  const collect = (list) => {
+    if (!Array.isArray(list)) return;
+    for (const r of list) if (string(r?.summary).trim()) entries.set(string(r?.id, 150), r);
+  };
+  collect(result.children);
+  // Batch passes are best-effort: a flaky model answer degrades to an empty
+  // section summary (filled on demand when the reader opens it), while
+  // actionable provider errors (key, quota, rate limit) still fail loudly.
+  const soft = async (list) => {
+    try {
+      collect((await call(CHILDREN_TASK, { ...meta, children: list })).children);
+    } catch (error) {
+      if (!(error instanceof AppError) || error.status < 500) throw error;
+    }
+  };
+  const pending = () => children.filter((c) => !entries.has(c.id));
+  const runPass = async (list) => {
+    const batches = [];
+    for (let i = 0; i < list.length; i += CHILDREN_PER_CALL)
+      batches.push(list.slice(i, i + CHILDREN_PER_CALL));
+    const lane = async (start) => {
+      for (let i = start; i < batches.length; i += 3) await soft(batches[i]);
+    };
+    await Promise.all(Array.from({ length: Math.min(3, batches.length) }, (_, s) => lane(s)));
+  };
+  if (wide) await runPass(children);
+  const missing = pending();
+  if (missing.length) await runPass(missing); // one targeted retry for the stragglers
+  if (children.length && !entries.size)
     throw new AppError('Модель не завершила саммари разделов. Повторите загрузку.', 502);
   return {
     summary: string(result.summary),
@@ -183,9 +222,7 @@ export async function analyze(body, key, options = {}) {
     why: string(result.why),
     skip: string(result.skip),
     children: children.map((c) => {
-      const entry = Array.isArray(result.children)
-        ? result.children.find((r) => r.id === c.id)
-        : null;
+      const entry = entries.get(c.id);
       return {
         id: c.id,
         title: string(entry?.title, 150) || c.title,

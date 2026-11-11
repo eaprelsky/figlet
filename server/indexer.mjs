@@ -1,5 +1,6 @@
 import { expandNode, normalizeBook, ancestors } from '../src/tree.ts';
 import { defaultModel } from './ai.mjs';
+import { AppError } from './network.mjs';
 
 // Whole-book background indexing. Priority: what the reader opened, then
 // sections the parent analyses marked as most important, then document order.
@@ -91,9 +92,23 @@ export function createIndexer({ cache, catalog, analyze, key, model = defaultMod
       return result.value;
     }
 
+    // A flaky model answer (5xx) skips one node instead of failing the whole
+    // book; actionable errors (key, quota, rate limit) still stop the job.
+    let failures = 0;
+    const attempt = async (id) => {
+      try {
+        return await analyzeNode(id);
+      } catch (error) {
+        if (!(error instanceof AppError) || error.status < 500) throw error;
+        failures++;
+        state.set(editionId, { ...progress, failed: failures });
+        return null;
+      }
+    };
+
     for (const id of path) {
       if (generation.get(editionId) !== token) return;
-      await analyzeNode(id);
+      await attempt(id);
     }
     // Children of path nodes enter the queue by reported importance.
     for (const id of path) {
@@ -109,14 +124,19 @@ export function createIndexer({ cache, catalog, analyze, key, model = defaultMod
     while (queue.length) {
       if (generation.get(editionId) !== token) return;
       if (tracked.size >= MAX_NODES_PER_JOB) {
-        state.set(editionId, { ...progress, status: 'done', capped: true });
+        state.set(editionId, {
+          ...progress,
+          status: 'done',
+          capped: true,
+          ...(failures ? { failed: failures } : {}),
+        });
         return;
       }
       const { id } = queue.shift();
       const node = book.nodes[id];
       if (!node || node.end - node.start < 1) continue;
-      const analysis = await analyzeNode(id);
-      if (node.end - node.start > MIN_LEAF_PARAGRAPHS) {
+      const analysis = await attempt(id);
+      if (analysis && node.end - node.start > MIN_LEAF_PARAGRAPHS) {
         expandNode(book, id);
         const weights = new Map(
           (analysis?.children || []).map((child) => [child.id, child.importance]),
@@ -130,7 +150,21 @@ export function createIndexer({ cache, catalog, analyze, key, model = defaultMod
       progress.total = tracked.size;
       state.set(editionId, { ...progress });
     }
-    state.set(editionId, { ...progress, total: tracked.size, status: 'done' });
+    if (!progress.done) {
+      state.set(editionId, {
+        ...progress,
+        total: tracked.size,
+        status: 'failed',
+        error: 'Ни один раздел не удалось разобрать. Проверьте ключ или повторите позже.',
+      });
+      return;
+    }
+    state.set(editionId, {
+      ...progress,
+      total: tracked.size,
+      status: 'done',
+      ...(failures ? { failed: failures } : {}),
+    });
   }
 
   return { request, status, analyses };
