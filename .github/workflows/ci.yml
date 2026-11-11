@@ -25,7 +25,10 @@ jobs:
               if source.suffix in ('.list', '.sources') and 'dl.google.com/linux/chrome' in source.read_text():
                   source.rename(source.with_suffix(source.suffix + '.disabled'))
           PY
-      - run: npx playwright install --with-deps chromium
+      # --with-deps occasionally dies on flaky apt mirrors; every required
+      # library is already preinstalled on ubuntu-latest, and the fonts it
+      # would add are not needed by the e2e suite, so retry without deps.
+      - run: npx playwright install --with-deps chromium || npx playwright install chromium
       - run: npm run test:e2e
 
   # Main only, after the full check: pull on the server, rebuild, roll out,
