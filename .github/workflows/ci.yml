@@ -45,6 +45,7 @@ jobs:
     steps:
       - name: Deploy to nocturna
         run: |
+          mkdir -p ~/.ssh
           install -m 600 /dev/null ~/.ssh/id_ed25519
           printf '%s\n' "${{ secrets.FIGLET_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
           ssh-keyscan -H nocturna.ru >> ~/.ssh/known_hosts
