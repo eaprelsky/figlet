@@ -66,6 +66,15 @@ test('indexer analyses the whole book: current path first, then by importance', 
   // Chapters enter by declared importance before document order.
   assert.ok(order.indexOf('Глава I') < order.indexOf('Глава 2'));
   assert.ok(order.indexOf('Глава 2') < order.indexOf('Глава 3'));
+  // Expansion fragments enter the queue and get analyzed too — the queue
+  // used to push {id,start} objects instead of ids, silently dropping them.
+  // (done can exceed total: path nodes are analyzed but not tracked.)
+  const fragments = Object.keys(analyses).filter((id) => id.includes(':'));
+  assert.ok(fragments.length > 0, 'no fragment sections were analyzed');
+  assert.ok(
+    final.done >= final.total,
+    `queue did not drain: done=${final.done} total=${final.total}`,
+  );
 });
 
 test('indexer pauses when the daily budget is exhausted and stores partial results', async () => {

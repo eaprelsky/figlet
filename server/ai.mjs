@@ -97,7 +97,19 @@ export async function completion({ key, model = defaultModel, task, data, baseUr
       502,
     );
   }
-  const result = await response.json();
+  let result;
+  try {
+    result = await response.json();
+  } catch (error) {
+    // The 110s abort signal also covers streaming the body: a timeout
+    // mid-body surfaces as AbortError, not as a fetch failure.
+    if (error?.name === 'AbortError')
+      throw new AppError(
+        'Модель не ответила вовремя. Попробуйте ещё раз: готовые разборы сохранены.',
+        504,
+      );
+    throw new AppError('Модель вернула неполный разбор. Повторите запрос.', 502);
+  }
   let content;
   try {
     content = anthropic

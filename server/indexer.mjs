@@ -144,7 +144,7 @@ export function createIndexer({ cache, catalog, analyze, key, model = defaultMod
         const children = book.nodes[id].children
           .map((child) => ({ id: child, start: book.nodes[child].start }))
           .filter(({ id: child }) => track(child));
-        for (const child of children) push(child, weights.get(child.id) || 3);
+        for (const child of children) push(child.id, weights.get(child.id) || 3);
         queue.sort((a, b) => b.importance - a.importance || a.start - b.start);
       }
       progress.total = tracked.size;
