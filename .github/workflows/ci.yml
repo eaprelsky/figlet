@@ -27,3 +27,35 @@ jobs:
           PY
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+
+  # Main only, after the full check: pull on the server, rebuild, roll out,
+  # then wait for the health endpoint. The dedicated read-only deploy key lives
+  # in the FIGLET_DEPLOY_KEY secret; /opt/figlet pulls via public HTTPS.
+  deploy:
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: figlet-production
+      cancel-in-progress: false
+    steps:
+      - name: Deploy to nocturna
+        run: |
+          install -m 600 /dev/null ~/.ssh/id_ed25519
+          printf '%s\n' "${{ secrets.FIGLET_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          ssh-keyscan -H nocturna.ru >> ~/.ssh/known_hosts
+          ssh ubuntu@nocturna.ru 'set -e
+            cd /opt/figlet
+            git pull --ff-only origin main
+            sudo docker compose build --pull
+            sudo docker compose up -d'
+      - name: Wait for health
+        run: |
+          for i in $(seq 1 30); do
+            code=$(ssh ubuntu@nocturna.ru 'curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3400/api/health' || true)
+            echo "attempt $i: $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 5
+          done
+          exit 1
